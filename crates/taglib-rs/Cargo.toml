@@ -1,0 +1,21 @@
+[package]
+name = "taglib-rs"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+build = "build.rs"
+links = "tag_c"
+
+[features]
+default = []
+test-utils = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+taglib-rs = { path = ".", features = ["test-utils"] }
+
+[build-dependencies]
+cmake = "0.1.57"

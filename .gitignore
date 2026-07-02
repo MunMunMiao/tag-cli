@@ -1,0 +1,15 @@
+/target
+.DS_Store
+.idea
+.vscode
+*.swp
+/coverage*
+/llvm_*
+/export_*
+/region_*
+/missing.txt
+/objs*.txt
+/*_expand*.rs
+/*_show*.txt
+/*_show_err.txt
+/*_zero_segments.json

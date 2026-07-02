@@ -1,0 +1,14 @@
+defaults:
+  ARTIST: "Podcast Host"
+  ALBUM: "Example Podcast"
+  PODCAST: "1"
+  PODCASTCATEGORY: "Technology"
+  PODCASTDESC: "Episode description here"
+  PODCASTURL: "https://example.com/podcast"
+files:
+  - path: "01-episode.mp3"
+    tags:
+      TITLE: "Episode 1: Introduction"
+      TRACKNUMBER: "1"
+      PODCASTID: "podcast-episode-1"
+    cover: "cover-3000x3000.jpg"

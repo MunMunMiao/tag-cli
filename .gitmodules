@@ -1,0 +1,3 @@
+[submodule "vendor/taglib"]
+	path = crates/taglib-rs/vendor/taglib
+	url = https://github.com/taglib/taglib.git

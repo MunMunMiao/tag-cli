@@ -1,0 +1,15 @@
+defaults:
+  ARTIST: "Example Orchestra"
+  ALBUM: "Example Album"
+  COMPOSER: "Example Composer"
+  CONDUCTOR: "Example Conductor"
+  DATE: "2026"
+files:
+  - path: "01-movement.mp3"
+    tags:
+      TITLE: "Movement I"
+      TRACKNUMBER: "1"
+      WORK: "Example Work"
+      MOVEMENTNAME: "Allegro"
+      MOVEMENTNUMBER: "1"
+    cover: "artwork.jpg"

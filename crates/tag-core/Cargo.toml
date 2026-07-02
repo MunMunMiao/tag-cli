@@ -1,0 +1,25 @@
+[package]
+name = "tag-core"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+build = "build.rs"
+
+[dependencies]
+taglib-rs = { path = "../taglib-rs" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tracing = "0.1"
+glob = "0.3"
+walkdir = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "tiff"] }
+img-parts = "0.4"
+mime_guess = "2"
+
+[dev-dependencies]
+tempfile = "3"
+taglib-rs = { path = "../taglib-rs", features = ["test-utils"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
