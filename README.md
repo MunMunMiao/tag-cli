@@ -97,6 +97,31 @@ For first-time use, follow the `--dry-run` → `-y` sequence, confirming the dif
 <a id="installation"></a>
 ## Installation
 
+### One-line installer
+
+<details>
+<summary>Linux / macOS</summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash
+```
+
+By default the script installs to `/usr/local/bin` if it is writable, otherwise it falls back to `$HOME/.local/bin`.
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash -s -- --version v0.1.0
+```
+
+Install to a custom directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash -s -- --install-dir ~/.bin
+```
+
+</details>
+
 ### Install from source
 
 ```bash
@@ -121,46 +146,78 @@ cargo uninstall tag-cli
 
 ### Pre-built binaries
 
-Download the archive for your platform from [GitHub Releases](https://github.com/MunMunMiao/tag-cli/releases).
+Download the raw binary for Linux or macOS from [GitHub Releases](https://github.com/MunMunMiao/tag-cli/releases).
 
-#### Linux / macOS
+<details>
+<summary>Linux / macOS</summary>
 
 ```bash
 VERSION=0.1.0  # Replace with the latest version from GitHub Releases
-TARGET=x86_64-unknown-linux-gnu  # or x86_64-apple-darwin, aarch64-apple-darwin
-curl -LO "https://github.com/MunMunMiao/tag-cli/releases/download/v${VERSION}/tag-cli-${VERSION}-${TARGET}.tar.gz"
-tar xzf "tag-cli-${VERSION}-${TARGET}.tar.gz"
-cd "tag-cli-${VERSION}-${TARGET}"
-./tag-cli --help
+TARGET=x86_64-linux  # or x86_64-macos, aarch64-macos
+curl -LO "https://github.com/MunMunMiao/tag-cli/releases/download/v${VERSION}/tag-cli-${VERSION}-${TARGET}"
+chmod +x "tag-cli-${VERSION}-${TARGET}"
+mv "tag-cli-${VERSION}-${TARGET}" /usr/local/bin/tag-cli
+tag-cli --version
 ```
 
-To call it globally, add that directory to your `PATH`, for example:
+To install to a different location, adjust the `mv` target and make sure that directory is in your `PATH`.
+
+</details>
+
+### Uninstall
+
+<details>
+<summary>Linux / macOS</summary>
+
+Run the installer with the `--uninstall` flag:
 
 ```bash
-# bash / zsh
-export PATH="$(pwd):$PATH"
-# Or add permanently to ~/.bashrc / ~/.zshrc
+curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash -s -- --uninstall
 ```
 
-#### Windows (PowerShell)
+This removes the `tag-cli` binary and cleans up the default installation directory.
 
-```powershell
-$VERSION="0.1.0"  # Replace with the latest version from GitHub Releases
-$TARGET="x86_64-pc-windows-msvc"
-Invoke-WebRequest -Uri "https://github.com/MunMunMiao/tag-cli/releases/download/v${VERSION}/tag-cli-${VERSION}-${TARGET}.zip" -OutFile "tag-cli-${VERSION}-${TARGET}.zip"
-Expand-Archive -Path "tag-cli-${VERSION}-${TARGET}.zip" -DestinationPath "tag-cli-${VERSION}-${TARGET}"
-cd "tag-cli-${VERSION}-${TARGET}"
-.\tag-cli.exe --help
+If you prefer to remove it manually, delete the binary from the directory you installed it to:
+
+```bash
+# Default system-wide location
+rm -f /usr/local/bin/tag-cli
+
+# Or default user location
+rm -f "$HOME/.local/bin/tag-cli"
+rmdir "$HOME/.local/bin" 2>/dev/null || true
 ```
 
-To call it globally, add the extracted directory to your `PATH`:
+</details>
 
-```powershell
-# Current session
-$env:PATH = "$PWD;$env:PATH"
-# Add permanently to user PATH (PowerShell 7+)
-[Environment]::SetEnvironmentVariable("PATH", "$PWD;$env:PATH", "User")
+### Update
+
+To upgrade to the latest release:
+
+```bash
+tag-cli update
 ```
+
+The command checks GitHub Releases, downloads the matching binary for your
+platform, verifies the SHA256 checksum, and replaces the running executable.
+No confirmation prompt is shown.
+
+The update command honors standard proxy environment variables:
+
+- `HTTP_PROXY` / `http_proxy`
+- `HTTPS_PROXY` / `https_proxy`
+- `ALL_PROXY` / `all_proxy`
+- `NO_PROXY` / `no_proxy`
+
+Proxy selection follows the usual scheme-specific priority (`HTTPS_PROXY` for
+HTTPS URLs, then `ALL_PROXY`, then `HTTP_PROXY`). `NO_PROXY` supports `*` for
+all hosts, exact hosts, and domain suffixes such as `.example.com`.
+
+> **Debug/test builds only:** `TAG_CLI_UPDATE_API_URL` and
+> `TAG_CLI_UPDATE_DOWNLOAD_BASE` can override the GitHub API and download base
+> URLs. These overrides are compiled out of release binaries and are ignored
+> there; they exist only to support local integration testing under
+> `#[cfg(debug_assertions)]`.
 
 <a id="installation-verification"></a>
 ## Installation verification

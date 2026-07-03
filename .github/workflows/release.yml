@@ -75,28 +75,15 @@ jobs:
             export VCPKG_ROOT
             echo "VCPKG_ROOT=$VCPKG_ROOT" >> "$GITHUB_ENV"
             echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+            echo "TAGLIB_STATIC_RUNTIME=1" >> "$GITHUB_ENV"
             echo "CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" >> "$GITHUB_ENV"
             echo "VCPKG_TARGET_TRIPLET=x64-windows-static" >> "$GITHUB_ENV"
             echo "ZLIB_ROOT=$VCPKG_ROOT/installed/x64-windows-static" >> "$GITHUB_ENV"
-            "$VCPKG_ROOT/vcpkg" install cmake zlib:x64-windows-static
+            "$VCPKG_ROOT/vcpkg" install zlib:x64-windows-static
           fi
 
       - name: Build
         run: cargo build --release -p tag-cli --target ${{ matrix.target }}
-
-      - name: Generate completions and man page
-        shell: bash
-        run: |
-          mkdir -p dist/completions dist/man
-          BIN="target/${{ matrix.target }}/release/tag-cli"
-          if [[ "${{ matrix.target }}" == *-windows-* ]]; then
-            BIN="${BIN}.exe"
-          fi
-          "$BIN" completions bash > dist/completions/tag-cli.bash
-          "$BIN" completions fish > dist/completions/tag-cli.fish
-          "$BIN" completions zsh > dist/completions/_tag-cli
-          "$BIN" completions powershell > dist/completions/_tag-cli.ps1
-          "$BIN" man > dist/man/tag-cli.1
 
       - name: Package
         shell: bash
@@ -104,7 +91,10 @@ jobs:
 
       - name: Upload release assets
         shell: bash
-        run: gh release upload "${GITHUB_REF_NAME}" dist/tag-cli-*
+        run: |
+          shopt -s nullglob
+          assets=(dist/tag-cli-*)
+          gh release upload "${GITHUB_REF_NAME}" "${assets[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -114,6 +104,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7.0.0
+
       - name: Download release assets
         run: |
           mkdir -p assets
@@ -124,7 +116,7 @@ jobs:
       - name: Generate SHA256SUMS
         run: |
           cd assets
-          sha256sum tag-cli-*.tar.gz tag-cli-*.zip > ../SHA256SUMS
+          sha256sum tag-cli-* > ../SHA256SUMS
 
       - name: Upload SHA256SUMS
         run: gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber
@@ -137,6 +129,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7.0.0
+
       - name: Publish release
         run: gh release edit "${GITHUB_REF_NAME}" --draft=false
         env:

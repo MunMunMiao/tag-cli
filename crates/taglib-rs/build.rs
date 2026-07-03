@@ -25,12 +25,25 @@ fn main() {
         );
     }
 
-    let dst = cmake::Config::new(&taglib_dir)
-        .define("BUILD_TESTING", "OFF")
+    let mut cfg = cmake::Config::new(&taglib_dir);
+    cfg.define("BUILD_TESTING", "OFF")
         .define("BUILD_EXAMPLES", "OFF")
         .define("BUILD_BINDINGS", "ON")
-        .define("BUILD_SHARED_LIBS", "OFF")
-        .build();
+        .define("BUILD_SHARED_LIBS", "OFF");
+
+    // When Rust is asked to link the C runtime statically on Windows
+    // (-C target-feature=+crt-static), TagLib must also be built with the
+    // static MSVC runtime or we get unresolved CRT symbols at link time.
+    // The release workflow signals this via TAGLIB_STATIC_RUNTIME=1.
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_env == "msvc" && env::var("TAGLIB_STATIC_RUNTIME").as_deref() == Ok("1") {
+        // CMP0091 is required so that CMAKE_MSVC_RUNTIME_LIBRARY is honored
+        // for both C and C++ targets; this covers TagLib's C binding too.
+        cfg.define("CMAKE_POLICY_DEFAULT_CMP0091", "NEW")
+            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded");
+    }
+
+    let dst = cfg.build();
 
     // Expose this crate's OUT_DIR to downstream build scripts so they can
     // locate the static TagLib archives (cargo:rustc-link-arg is not propagated

@@ -99,7 +99,14 @@ fn generate_audio_fixtures(base: &Path) {
     let optional: Vec<(&str, &[&str])> = vec![
         (
             "sample_oga.oga",
-            &["-c:a", "flac", "-f", "ogg", "-metadata", "TITLE=Original Title"],
+            &[
+                "-c:a",
+                "flac",
+                "-f",
+                "ogg",
+                "-metadata",
+                "TITLE=Original Title",
+            ],
         ),
         (
             "sample_spx.spx",

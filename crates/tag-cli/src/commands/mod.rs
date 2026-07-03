@@ -7,3 +7,4 @@ pub mod info;
 pub mod init_manifest;
 pub mod list_keys;
 pub mod set;
+pub mod update;

@@ -45,7 +45,9 @@ pub fn run(args: &SetArgs, verbose: bool) -> Result<(), TagCliError> {
         .build();
 
     workflow.run(&mut ctx)?;
-    if args.dry_run && let Some(diff) = crate::diff::compute_diff(&ctx) {
+    if args.dry_run
+        && let Some(diff) = crate::diff::compute_diff(&ctx)
+    {
         println!("{}", diff);
     }
     for msg in &ctx.report.messages {

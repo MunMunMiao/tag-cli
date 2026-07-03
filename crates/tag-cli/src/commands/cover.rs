@@ -67,7 +67,9 @@ fn cover_set(args: &crate::cli::CoverSetArgs, verbose: bool) -> Result<(), TagCl
         .build();
 
     workflow.run(&mut ctx)?;
-    if args.dry_run && let Some(diff) = crate::diff::compute_diff(&ctx) {
+    if args.dry_run
+        && let Some(diff) = crate::diff::compute_diff(&ctx)
+    {
         println!("{}", diff);
     }
     for msg in &ctx.report.messages {
@@ -91,7 +93,9 @@ fn cover_clear(args: &crate::cli::CoverClearArgs, verbose: bool) -> Result<(), T
         .build();
 
     workflow.run(&mut ctx)?;
-    if args.dry_run && let Some(diff) = crate::diff::compute_diff(&ctx) {
+    if args.dry_run
+        && let Some(diff) = crate::diff::compute_diff(&ctx)
+    {
         println!("{}", diff);
     }
     for msg in &ctx.report.messages {

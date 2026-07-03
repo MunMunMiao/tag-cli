@@ -8,13 +8,67 @@ use tag_core::workflow::context::{ImageProcessingConfig, ImageTargetFormat};
 
 #[derive(Parser, Debug)]
 #[command(name = "tag-cli")]
-#[command(about = "A CLI tool for editing audio metadata via TagLib")]
+#[command(
+    about = "A CLI tool for editing audio metadata via TagLib",
+    long_about = "Batch edit audio file metadata (tags and embedded cover art) using TagLib.
+
+Global flags:
+  -v, --verbose     Enable verbose/tracing output (debug logging is printed to stderr).
+
+Confirmation rules for destructive writes:
+  In-place edits and overwrite operations require confirmation unless one of the following is true:
+    - -y / --yes is passed on the command line
+    - TAG_CLI_YES=1 or TAG_CLI_YES=true is set in the environment
+    - CI is set to any non-empty value other than false (e.g. CI=1, CI=true)
+
+In-place editing:
+  When -o / --output is omitted, the input file is modified in place. Use --dry-run to preview
+  changes without writing anything.
+
+Common workflows:
+  Show everything about a file:
+    tag-cli info -i song.mp3
+
+  Read one or more tags:
+    tag-cli get -i song.mp3 TITLE ARTIST
+
+  Set tags (edit in place with confirmation skipped):
+    tag-cli set -i song.mp3 -y TITLE=\"My Title\" ARTIST=\"My Artist\"
+
+  Clear all tags and cover art:
+    tag-cli clear -i song.mp3 -y --all
+
+  Set embedded cover art:
+    tag-cli cover set -i song.mp3 -y cover.jpg
+
+  Apply a YAML manifest to many files:
+    tag-cli apply -m manifest.yaml -y
+
+  Export metadata to stdout, a file, or sidecars:
+    tag-cli export metadata -i \"**/*.mp3\"
+    tag-cli export metadata -i \"**/*.mp3\" -o report.yaml
+    tag-cli export metadata -i \"**/*.mp3\" -o sidecars/ --per-file
+
+  Generate a manifest template:
+    tag-cli init-manifest -y -o manifest.yaml
+
+  Generate shell completions:
+    tag-cli completions bash > /etc/bash_completion.d/tag-cli
+
+  Generate a man page:
+    tag-cli man > tag-cli.1"
+)]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 
-    #[arg(short, long, global = true, help = "Enable verbose output")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        help = "Enable verbose/tracing output (debug logging is printed to stderr)"
+    )]
     pub verbose: bool,
 }
 
@@ -66,14 +120,20 @@ pub enum Commands {
     #[command(about = "Generate a minimal manifest template")]
     InitManifest(InitManifestArgs),
 
-    #[command(subcommand)]
+    #[command(subcommand, about = "Export metadata from audio files")]
     Export(ExportCommands),
 
     #[command(about = "Generate shell completion script")]
     Completions(CompletionsArgs),
 
-    #[command(about = "Generate man page")]
+    #[command(
+        about = "Generate man page",
+        long_about = "Generate a man page for tag-cli and print it to stdout.\n\nExamples:\n  tag-cli man > tag-cli.1\n  tag-cli man | gzip > /usr/share/man/man1/tag-cli.1.gz"
+    )]
     Man,
+
+    #[command(about = "Update tag-cli to the latest release")]
+    Update,
 }
 
 #[derive(Parser, Debug)]
@@ -82,13 +142,18 @@ pub enum Commands {
     long_about = "Generate a minimal manifest template file. This command creates or overwrites the output file and requires confirmation. Use --template to select a scenario-specific template.\n\nExamples:\n  tag-cli init-manifest -y\n  tag-cli init-manifest -y -o manifest.yaml\n  tag-cli init-manifest -y --template classical -o manifest.yaml"
 )]
 pub struct InitManifestArgs {
-    #[arg(short = 'o', long, default_value = "manifest.yaml")]
+    #[arg(
+        short = 'o',
+        long,
+        default_value = "manifest.yaml",
+        help = "Output manifest file path"
+    )]
     pub output: PathBuf,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
@@ -161,18 +226,18 @@ pub struct SetArgs {
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path (defaults to in-place)"
+        help = "Output audio file path; if omitted, the input file is edited in place"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Show changes without applying them")]
+    #[arg(long, help = "Preview changes and print diff without writing")]
     pub dry_run: bool,
 
     #[arg(
@@ -198,18 +263,18 @@ pub struct ClearArgs {
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path (defaults to in-place)"
+        help = "Output audio file path; if omitted, the input file is edited in place"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Show changes without applying them")]
+    #[arg(long, help = "Preview changes and print diff without writing")]
     pub dry_run: bool,
 
     #[arg(long, help = "Clear all supported tags and embedded cover art")]
@@ -282,18 +347,18 @@ pub struct CoverSetArgs {
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path (defaults to in-place)"
+        help = "Output audio file path; if omitted, the input file is edited in place"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Show changes without applying them")]
+    #[arg(long, help = "Preview changes and print diff without writing")]
     pub dry_run: bool,
 
     #[command(flatten)]
@@ -322,18 +387,18 @@ pub struct CoverClearArgs {
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path (defaults to in-place)"
+        help = "Output audio file path; if omitted, the input file is edited in place"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Show changes without applying them")]
+    #[arg(long, help = "Preview changes and print diff without writing")]
     pub dry_run: bool,
 }
 
@@ -348,18 +413,19 @@ pub struct ApplyArgs {
         long = "manifest",
         alias = "filename",
         visible_short_alias = 'f',
-        value_name = "MANIFEST"
+        value_name = "MANIFEST",
+        help = "Path to the YAML manifest file"
     )]
     pub filename: PathBuf,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation prompt (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Show changes without applying them")]
+    #[arg(long, help = "Preview changes and print diff without writing")]
     pub dry_run: bool,
 
     #[arg(long, help = "Stop on first failure")]
@@ -371,25 +437,38 @@ pub struct ApplyArgs {
 
 #[derive(Parser, Debug, Clone)]
 pub struct ImageOptions {
-    #[arg(long, help = "Use the cover image as-is without reprocessing")]
+    #[arg(
+        long,
+        help = "Use the cover image as-is without reprocessing (default: cover art is reprocessed)"
+    )]
     pub no_process_cover: bool,
 
-    #[arg(long, value_enum, help = "Convert cover art to format (jpeg, png)")]
+    #[arg(
+        long,
+        value_enum,
+        help = "Convert cover art to the specified format (jpeg, png); default preserves the source format"
+    )]
     pub cover_format: Option<CoverFormat>,
 
     #[arg(
         long,
-        help = "Resize cover art so max width/height does not exceed this value"
+        value_name = "PIXELS",
+        help = "Resize cover art so max(width, height) <= PIXELS. Defaults depend on target container (e.g. MP3/WAV 1200, MP4/FLAC/Ogg 2048)"
     )]
     pub cover_max_size: Option<u32>,
 
     #[arg(
         long,
-        help = "Compress cover art so file size does not exceed this value in KB"
+        value_name = "KB",
+        help = "Compress cover art so file size <= KB kilobytes. Defaults depend on target container (e.g. MP3/WAV 1200 KB, MP4/FLAC/Ogg 2048 KB)"
     )]
     pub cover_max_file_size: Option<u32>,
 
-    #[arg(long, help = "JPEG/PNG quality (1-100)")]
+    #[arg(
+        long,
+        value_name = "QUALITY",
+        help = "JPEG/PNG compression quality, 1-100 (default: 90)"
+    )]
     pub cover_quality: Option<u8>,
 }
 
@@ -452,61 +531,73 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
 
 #[derive(Subcommand, Debug)]
 pub enum ExportCommands {
-    #[command(about = "Export metadata from audio files")]
+    #[command(
+        about = "Export metadata from audio files",
+        long_about = "Export metadata and audio properties from audio files.\n\nOutput modes:\n  stdout (default)        Print a single aggregate report to stdout.\n  -o FILE                 Write a single aggregate report to FILE.\n  -o DIR  --per-file      Write one sidecar file per input into DIR.\n  -o FILE --aggregate     Force aggregate report even if -o looks like a directory.\n\nOrganization:\n  --flat                  Flat array of records (default).\n  --by-directory          Group records by parent directory.\n  --by-album              Group records by ALBUM tag.\n\nField filtering:\n  --fields FIELDS         Comma-separated allowlist (e.g. TITLE,ARTIST,ALBUM).\n  --exclude-fields FIELDS Comma-separated blocklist.\n\nPath style:\n  --relative-paths        Use paths relative to the current directory (default).\n  --absolute-paths        Use absolute paths.\n\nUnsupported or corrupt files are skipped and marked with `corrupt_file: true`.\n\nExamples:\n  Export a single file to stdout as YAML:\n    tag-cli export metadata -i song.mp3\n\n  Export all FLAC files recursively to a JSON aggregate report:\n    tag-cli export metadata -i \"**/*.flac\" -o report.json --format json\n\n  Export a directory tree to per-file sidecars:\n    tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file\n\n  Export only a few fields, grouped by album:\n    tag-cli export metadata -i \"**/*.mp3\" --fields TITLE,ARTIST,ALBUM --by-album\n\n  Exclude technical fields and write absolute paths:\n    tag-cli export metadata -i \"**/*.ogg\" --exclude-fields bitrate,sample_rate --absolute-paths\n\n  Stop on the first unreadable file:\n    tag-cli export metadata -i \"**/*.wav\" --fail-fast"
+    )]
     Metadata(ExportMetadataArgs),
 }
 
 #[derive(Parser, Debug)]
 #[command(
     about = "Export metadata from audio files",
-    long_about = "Export metadata and audio properties from audio files matched by glob patterns. Unsupported files are skipped. Output can be written to stdout, a single file, or per-file sidecars."
+    long_about = "Export metadata and audio properties from audio files matched by glob patterns or literal paths.\n\nExamples:\n  tag-cli export metadata -i song.mp3\n  tag-cli export metadata -i \"**/*.flac\" -o report.json --format json\n  tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file"
 )]
 pub struct ExportMetadataArgs {
     #[arg(
         short = 'i',
         long = "input",
         required = true,
-        help = "Glob pattern or literal path; may be specified multiple times"
+        help = "Input glob pattern or literal audio file path; may be specified multiple times"
     )]
     pub input: Vec<PathBuf>,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output path: file -> aggregate report, directory -> per-file sidecars"
+        help = "Output path: file writes an aggregate report, directory writes per-file sidecars; stdout if omitted"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(short, long, value_enum, help = "Output format (json, yaml, table)")]
     pub format: Option<OutputFormat>,
 
-    #[arg(long, help = "Force per-file sidecar output even when -o is a file")]
+    #[arg(
+        long,
+        help = "Force per-file sidecar output even when -o is a file path"
+    )]
     pub per_file: bool,
 
-    #[arg(long, help = "Force aggregate report even when -o is a directory")]
+    #[arg(
+        long,
+        help = "Force aggregate report output even when -o is a directory path"
+    )]
     pub aggregate: bool,
 
     #[arg(
         long,
         group = "organization",
-        help = "Output flat record array (default)"
+        help = "Output a flat record array (default organization)"
     )]
     pub flat: bool,
 
     #[arg(
         long,
         group = "organization",
-        help = "Group records by parent directory"
+        help = "Group records by their parent directory"
     )]
     pub by_directory: bool,
 
-    #[arg(long, group = "organization", help = "Group records by album tag")]
+    #[arg(long, group = "organization", help = "Group records by the ALBUM tag")]
     pub by_album: bool,
 
-    #[arg(long, help = "Comma-separated field allowlist")]
+    #[arg(
+        long,
+        help = "Comma-separated allowlist of fields to include (e.g. TITLE,ARTIST,ALBUM)"
+    )]
     pub fields: Option<String>,
 
-    #[arg(long, help = "Comma-separated field blocklist")]
+    #[arg(long, help = "Comma-separated blocklist of fields to exclude")]
     pub exclude_fields: Option<String>,
 
     #[arg(long, group = "path_style", help = "Use absolute paths in output")]
@@ -519,13 +610,16 @@ pub struct ExportMetadataArgs {
     )]
     pub relative_paths: bool,
 
-    #[arg(long, help = "Stop on first unreadable file")]
+    #[arg(
+        long,
+        help = "Stop on the first unreadable file instead of skipping it"
+    )]
     pub fail_fast: bool,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip overwrite confirmation (also respects TAG_CLI_YES=1 or CI=true)"
+        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 }

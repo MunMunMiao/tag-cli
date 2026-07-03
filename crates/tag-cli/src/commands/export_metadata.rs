@@ -171,8 +171,8 @@ fn resolve_format(args: &ExportMetadataArgs, mode: &OutputMode) -> CoreOutputFor
 const KNOWN_AUDIO_EXTENSIONS: [&str; 40] = [
     "mp3", "mp2", "m4a", "m4r", "m4b", "m4p", "mp4", "m4v", "3g2", "aac", "flac", "ogg", "opus",
     "oga", "spx", "wav", "aif", "aiff", "afc", "aifc", "wma", "asf", "ape", "mpc", "wv", "tta",
-    "dsf", "dff", "dsdiff", "mod", "module", "nst", "wow", "s3m", "it", "xm", "shn", "mkv",
-    "mka", "webm",
+    "dsf", "dff", "dsdiff", "mod", "module", "nst", "wow", "s3m", "it", "xm", "shn", "mkv", "mka",
+    "webm",
 ];
 
 fn is_known_audio_format(path: &Path) -> bool {
