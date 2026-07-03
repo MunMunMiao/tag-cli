@@ -1,6 +1,6 @@
 # tag-cli
 
-[![GitHub Release](https://img.shields.io/github/v/release/MunMunMiao/tag-cli.svg)](https://github.com/MunMunMiao/tag-cli/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/MunMunMiao/tag-cli.svg?logo=github)](https://github.com/MunMunMiao/tag-cli/releases)
 [![CI](https://github.com/MunMunMiao/tag-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/MunMunMiao/tag-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85+-blue.svg)](https://blog.rust-lang.org/2025/02/20/Rust-1.85.0.html)
