@@ -9,6 +9,7 @@ pub struct Manifest {
     pub defaults: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_processing: Option<ImageProcessing>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<FileEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
