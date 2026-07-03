@@ -113,19 +113,7 @@ fn read_metadata_from_file_handle(
     }
 
     let tag = unsafe { ffi::taglib_file_tag(file) };
-    let tags = if tag.is_null() {
-        if lenient {
-            Tags::default()
-        } else {
-            return Err(TagError::MissingTag);
-        }
-    } else {
-        Tags {
-            title: unsafe { take_taglib_string(ffi::taglib_tag_title(tag)) },
-            artist: unsafe { take_taglib_string(ffi::taglib_tag_artist(tag)) },
-            album: unsafe { take_taglib_string(ffi::taglib_tag_album(tag)) },
-        }
-    };
+    let tags = read_tags(tag, lenient)?;
 
     let properties = unsafe { collect_properties(file) };
     let pictures = unsafe { collect_pictures(file) };
@@ -137,6 +125,22 @@ fn read_metadata_from_file_handle(
         pictures,
         audio,
     })
+}
+
+fn read_tags(tag: *mut ffi::TagLib_Tag, lenient: bool) -> Result<Tags, TagError> {
+    if tag.is_null() {
+        if lenient {
+            Ok(Tags::default())
+        } else {
+            Err(TagError::MissingTag)
+        }
+    } else {
+        Ok(Tags {
+            title: unsafe { take_taglib_string(ffi::taglib_tag_title(tag)) },
+            artist: unsafe { take_taglib_string(ffi::taglib_tag_artist(tag)) },
+            album: unsafe { take_taglib_string(ffi::taglib_tag_album(tag)) },
+        })
+    }
 }
 
 struct FileHandle {
@@ -666,5 +670,17 @@ mod tests {
         assert!(metadata.tags.artist.is_none());
         assert!(metadata.tags.album.is_none());
         assert!(metadata.audio.is_some());
+    }
+
+    #[test]
+    fn read_tags_null_strict_returns_missing_tag_error() {
+        let result = read_tags(std::ptr::null_mut(), false);
+        assert_eq!(result, Err(TagError::MissingTag));
+    }
+
+    #[test]
+    fn read_tags_null_lenient_returns_default_tags() {
+        let result = read_tags(std::ptr::null_mut(), true);
+        assert_eq!(result, Ok(Tags::default()));
     }
 }

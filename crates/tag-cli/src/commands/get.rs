@@ -80,15 +80,15 @@ mod tests {
 
     #[test]
     fn map_format_all_variants() {
-        assert!(matches!(
+        assert_eq!(
             map_format(Some(crate::cli::OutputFormat::Json)),
             OutputFormat::Json
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
             map_format(Some(crate::cli::OutputFormat::Yaml)),
             OutputFormat::Yaml
-        ));
-        assert!(matches!(map_format(None), OutputFormat::Table));
+        );
+        assert_eq!(map_format(None), OutputFormat::Table);
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use clap_complete::Shell;
 
 use tag_core::error::TagCliError;
 use tag_core::workflow::context::{ImageProcessingConfig, ImageTargetFormat};
@@ -9,55 +8,57 @@ use tag_core::workflow::context::{ImageProcessingConfig, ImageTargetFormat};
 #[derive(Parser, Debug)]
 #[command(name = "tag-cli")]
 #[command(
-    about = "A CLI tool for editing audio metadata via TagLib",
-    long_about = "Batch edit audio file metadata (tags and embedded cover art) using TagLib.
+    about = "Edit audio metadata and embedded cover art",
+    long_about = "Edit audio metadata and embedded cover art.
 
-Global flags:
-  -v, --verbose     Enable verbose/tracing output (debug logging is printed to stderr).
-
-Confirmation rules for destructive writes:
-  In-place edits and overwrite operations require confirmation unless one of the following is true:
-    - -y / --yes is passed on the command line
-    - TAG_CLI_YES=1 or TAG_CLI_YES=true is set in the environment
-    - CI is set to any non-empty value other than false (e.g. CI=1, CI=true)
-
-In-place editing:
-  When -o / --output is omitted, the input file is modified in place. Use --dry-run to preview
-  changes without writing anything.
+tag-cli wraps TagLib to read and write tags and cover images for MP3, FLAC, M4A, Ogg, Opus, WAV, and many other formats.
 
 Common workflows:
-  Show everything about a file:
-    tag-cli info -i song.mp3
+  # Show everything about a file
+  tag-cli info -i song.mp3
 
-  Read one or more tags:
-    tag-cli get -i song.mp3 TITLE ARTIST
+  # Read selected tags
+  tag-cli get -i song.mp3 TITLE ARTIST
 
-  Set tags (edit in place with confirmation skipped):
-    tag-cli set -i song.mp3 -y TITLE=\"My Title\" ARTIST=\"My Artist\"
+  # Preview a tag edit before writing
+  tag-cli set -i song.mp3 --dry-run TITLE=\"My Title\"
 
-  Clear all tags and cover art:
-    tag-cli clear -i song.mp3 -y --all
+  # Write tags in place after confirmation is explicit
+  tag-cli set -i song.mp3 -y TITLE=\"My Title\" ARTIST=\"My Artist\"
 
-  Set embedded cover art:
-    tag-cli cover set -i song.mp3 -y cover.jpg
+  # Extract embedded cover art
+  tag-cli cover get -i song.mp3 -o cover.jpg
 
-  Apply a YAML manifest to many files:
-    tag-cli apply -m manifest.yaml -y
+  # Export metadata as an apply-ready YAML manifest
+  tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
 
-  Export metadata as an apply-ready YAML manifest:
-    tag-cli export metadata -i \"**/*.mp3\"
-    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
-    tag-cli export metadata -i \"**/*.mp3\" -o sidecars/ --per-file
-    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover
+Safety:
+  Commands that modify files in place require -y/--yes, TAG_CLI_YES=1/true, or CI=true.
+  Use --dry-run first when a command supports it.",
+    after_help = "Use \"tag-cli <COMMAND> --help\" for more information about a command.",
+    help_template = "{before-help}{about-with-newline}
+{usage-heading} {usage}
 
-  Generate a manifest template:
-    tag-cli init-manifest -y -o manifest.yaml
+Inspect commands:
+  info       Show all metadata, audio properties, and embedded pictures
+  get        Read selected tag values
+  list-keys  List supported tag keys
 
-  Generate shell completions:
-    tag-cli completions bash > /etc/bash_completion.d/tag-cli
+Edit commands:
+  set        Set tag values
+  clear      Clear selected or all tags
+  cover      Manage embedded cover art
 
-  Generate a man page:
-    tag-cli man > tag-cli.1"
+Batch commands:
+  apply      Apply a YAML manifest
+  export     Export metadata from audio files
+
+Utility commands:
+  update     Update tag-cli to the latest release
+
+Options:
+{options}
+{after-help}"
 )]
 #[command(version)]
 pub struct Cli {
@@ -97,199 +98,270 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    #[command(about = "List supported tag keys")]
+    #[command(
+        about = "List supported tag keys",
+        long_about = "List the tag keys supported by tag-cli.
+
+Examples:
+  # List keys in table form
+  tag-cli list-keys
+
+  # List keys as JSON
+  tag-cli list-keys --format json
+
+  # List keys as YAML
+  tag-cli list-keys --format yaml"
+    )]
     ListKeys(ListKeysArgs),
 
-    #[command(about = "Show all metadata, audio properties, and embedded pictures")]
+    #[command(
+        about = "Show all metadata, audio properties, and embedded pictures",
+        long_about = "Show all metadata, audio properties, and embedded pictures for an audio file.
+
+Examples:
+  # Show all metadata in table form
+  tag-cli info -i song.mp3
+
+  # Show metadata as JSON
+  tag-cli info -i song.mp3 -f json
+
+  # Show metadata as YAML
+  tag-cli info -i song.mp3 -f yaml"
+    )]
     Info(InfoArgs),
 
-    #[command(about = "Read selected tag values")]
-    Get(GetArgs),
+    #[command(
+        about = "Read selected tag values",
+        long_about = "Read selected tag values from an audio file. When no keys are given, all tags are shown.
 
-    #[command(about = "Set tag values")]
+Examples:
+  # Read selected tags
+  tag-cli get -i song.mp3 TITLE ARTIST
+
+  # Read every tag as JSON
+  tag-cli get -i song.mp3 -f json
+
+  # Read every tag as YAML
+  tag-cli get -i song.mp3 -f yaml"
+    )]
+    Get(GetArgs),
+    #[command(
+        about = "Set tag values",
+        long_about = "Set one or more tag values on an audio file.
+
+When no output path is given, the input file is modified in place and requires confirmation. Use --dry-run to preview changes without writing, and -y to skip the confirmation prompt.
+
+Examples:
+  # Preview a tag edit before writing
+  tag-cli set -i song.mp3 --dry-run TITLE=\"My Title\" ARTIST=\"My Artist\"
+
+  # Write tags in place after confirmation is explicit
+  tag-cli set -i song.mp3 -y TITLE=\"My Title\" ARTIST=\"My Artist\"
+
+  # Write tags to a new output file
+  tag-cli set -i song.mp3 -o output.mp3 TITLE=\"My Title\"
+
+  # Replace all tags with the listed values
+  tag-cli set -i song.mp3 -y --replace TITLE=\"My Title\" ARTIST=\"My Artist\""
+    )]
     Set(SetArgs),
 
-    #[command(about = "Clear selected or all tags")]
+    #[command(
+        about = "Clear selected or all tags",
+        long_about = "Clear selected tags or all supported tags and embedded cover art from an audio file.
+
+When no output path is given, the input file is modified in place and requires confirmation. Use --all to clear every supported tag and embedded cover; otherwise list the tags to clear.
+
+Examples:
+  # Preview clearing every supported tag and cover
+  tag-cli clear -i song.mp3 --dry-run --all
+
+  # Clear every supported tag and cover in place
+  tag-cli clear -i song.mp3 -y --all
+
+  # Clear selected tags in place
+  tag-cli clear -i song.mp3 -y TITLE COMMENT"
+    )]
     Clear(ClearArgs),
 
-    #[command(about = "Manage embedded cover art")]
-    Cover(CoverArgs),
+    #[command(
+        about = "Manage embedded cover art",
+        long_about = "Manage embedded cover art.
 
-    #[command(about = "Apply a YAML manifest")]
+Available actions:
+  get    Extract embedded cover art to an image file
+  set    Set embedded cover art from an image file
+  clear  Remove embedded cover art
+
+Examples:
+  # Extract embedded cover art
+  tag-cli cover get -i song.mp3 -o cover.jpg
+
+  # Set embedded cover art
+  tag-cli cover set -i song.mp3 -y cover.jpg
+
+  # Remove embedded cover art
+  tag-cli cover clear -i song.mp3 -y"
+    )]
+    Cover(CoverArgs),
+    #[command(
+        about = "Apply a YAML manifest",
+        long_about = "Apply a YAML manifest to one or more audio files.
+
+The manifest declares target tags and covers for each file. Use --dry-run to preview every change, and -y to skip confirmation.
+
+Examples:
+  # Preview manifest changes before writing
+  tag-cli apply -m manifest.yaml --dry-run
+
+  # Apply manifest changes after confirmation is explicit
+  tag-cli apply -m manifest.yaml -y
+
+  # Stop on the first failed file
+  tag-cli apply -m manifest.yaml -y --fail-fast"
+    )]
     Apply(ApplyArgs),
 
-    #[command(about = "Generate a minimal manifest template")]
-    InitManifest(InitManifestArgs),
-
-    #[command(subcommand, about = "Export metadata from audio files")]
-    Export(ExportCommands),
-
-    #[command(about = "Generate shell completion script")]
-    Completions(CompletionsArgs),
-
     #[command(
-        about = "Generate man page",
-        long_about = "Generate a man page for tag-cli and print it to stdout.\n\nExamples:\n  tag-cli man > tag-cli.1\n  tag-cli man | gzip > /usr/share/man/man1/tag-cli.1.gz"
-    )]
-    Man,
+        subcommand,
+        about = "Export metadata from audio files",
+        long_about = "Export metadata from audio files.
 
-    #[command(about = "Update tag-cli to the latest release")]
+Examples:
+  # Export metadata as an apply-ready YAML manifest
+  tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
+
+  # Export metadata and embedded front cover images
+  tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover"
+    )]
+    Export(ExportCommands),
+    #[command(
+        about = "Update tag-cli to the latest release",
+        long_about = "Update tag-cli to the latest release.
+
+Checks GitHub Releases, downloads the matching binary for your platform, verifies the SHA256 checksum, and replaces the running executable. No confirmation prompt is shown.
+
+Examples:
+  # Update tag-cli in place
+  tag-cli update"
+    )]
     Update,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Generate a minimal manifest template",
-    long_about = "Generate a minimal manifest template file. This command creates or overwrites the output file and requires confirmation. Use --template to select a scenario-specific template.\n\nExamples:\n  tag-cli init-manifest -y\n  tag-cli init-manifest -y -o manifest.yaml\n  tag-cli init-manifest -y --template classical -o manifest.yaml"
-)]
-pub struct InitManifestArgs {
-    #[arg(
-        short = 'o',
-        long,
-        default_value = "manifest.yaml",
-        help = "Output manifest file path"
-    )]
-    pub output: PathBuf,
+pub struct InfoArgs {
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
+    pub input: PathBuf,
 
     #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
-    )]
-    pub yes: bool,
-
-    #[arg(
+        short,
         long,
         value_enum,
-        help = "Scenario template to use (classical, podcast, radio, education, vinyl, release)"
+        value_name = "FORMAT",
+        help = "Output format (table, json, or yaml)"
     )]
-    pub template: Option<TemplateName>,
-}
-
-#[derive(Parser, Debug)]
-#[command(
-    about = "Generate shell completion script",
-    long_about = "Generate a shell completion script for tag-cli and print it to stdout.\n\nExamples:\n  tag-cli completions bash > /etc/bash_completion.d/tag-cli\n  tag-cli completions zsh > /usr/local/share/zsh/site-functions/_tag-cli\n  tag-cli completions fish > ~/.config/fish/completions/tag-cli.fish"
-)]
-pub struct CompletionsArgs {
-    #[arg(help = "Target shell (bash, zsh, fish)")]
-    pub shell: Shell,
-}
-
-#[derive(Parser, Debug)]
-#[command(
-    about = "Show all metadata, audio properties, and embedded pictures",
-    long_about = "Show all metadata, audio properties, and embedded pictures for an audio file.\n\nExamples:\n  tag-cli info -i song.mp3\n  tag-cli info -i song.mp3 -f json"
-)]
-pub struct InfoArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
-    pub input: PathBuf,
-
-    #[arg(short, long, value_enum, help = "Output format (json, yaml, table)")]
     pub format: Option<OutputFormat>,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "List supported tag keys",
-    long_about = "List the tag keys supported by tag-cli.\n\nExamples:\n  tag-cli list-keys\n  tag-cli list-keys --format json"
-)]
 pub struct ListKeysArgs {
-    #[arg(short, long, value_enum, help = "Output format (json, yaml, table)")]
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        help = "Output format (table, json, or yaml)"
+    )]
     pub format: Option<OutputFormat>,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Read selected tag values",
-    long_about = "Read selected tag values from an audio file.\n\nExamples:\n  tag-cli get -i song.mp3 TITLE ARTIST\n  tag-cli get -i song.mp3 TITLE --format json"
-)]
 pub struct GetArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
     pub input: PathBuf,
 
-    #[arg(help = "Tag keys to read")]
+    #[arg(value_name = "KEY", help = "Tag keys to read (default: all tags)")]
     pub keys: Vec<String>,
 
-    #[arg(short, long, value_enum, help = "Output format (json, yaml, table)")]
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "FORMAT",
+        help = "Output format (table, json, or yaml)"
+    )]
     pub format: Option<OutputFormat>,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Set tag values",
-    long_about = "Set tag values on an audio file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli set -i song.mp3 -y TITLE=\"My Title\" ARTIST=\"My Artist\"\n  tag-cli set -i song.mp3 -o output.mp3 -y TITLE=\"My Title\""
-)]
 pub struct SetArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
     pub input: PathBuf,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path; if omitted, the input file is edited in place"
+        value_name = "FILE",
+        help = "Output file path (default: edit input in place)"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Preview changes and print diff without writing")]
+    #[arg(long, help = "Preview changes and print a diff without writing")]
     pub dry_run: bool,
 
     #[arg(
         long,
         short = 'R',
-        help = "Replace all metadata: keep only the tags specified here and clear all other tag values."
+        help = "Replace all metadata: keep only the listed tags and clear all other tag values"
     )]
     pub replace: bool,
 
-    #[arg(value_parser = parse_key_value, help = "Tag key-value pairs as KEY=VALUE")]
+    #[arg(
+        value_parser = parse_key_value,
+        value_name = "KEY=VALUE",
+        help = "Tag assignment to write; repeat for multiple tags"
+    )]
     pub tags: Vec<(String, String)>,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Clear selected or all tags",
-    long_about = "Clear selected tags or all supported tags and embedded cover art from an audio file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli clear -i song.mp3 -y --all\n  tag-cli clear -i song.mp3 -y TITLE ARTIST"
-)]
 pub struct ClearArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
     pub input: PathBuf,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path; if omitted, the input file is edited in place"
+        value_name = "FILE",
+        help = "Output file path (default: edit input in place)"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Preview changes and print diff without writing")]
+    #[arg(long, help = "Preview changes and print a diff without writing")]
     pub dry_run: bool,
 
     #[arg(long, help = "Clear all supported tags and embedded cover art")]
     pub all: bool,
 
-    #[arg(help = "Tag keys to clear")]
+    #[arg(value_name = "KEY", help = "Tag keys to clear")]
     pub keys: Vec<String>,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Manage embedded cover art",
-    long_about = "Manage embedded cover art.\n\nSubcommands:\n  get    Extract embedded cover art\n  set    Set embedded cover art from an image\n  clear  Remove embedded cover art\n\nExamples:\n  tag-cli cover get -i song.mp3 -o cover.jpg\n  tag-cli cover set -i song.mp3 -y cover.jpg\n  tag-cli cover clear -i song.mp3 -y"
-)]
 pub struct CoverArgs {
     #[command(subcommand)]
     pub command: CoverCommands,
@@ -299,67 +371,96 @@ pub struct CoverArgs {
 pub enum CoverCommands {
     #[command(
         about = "Extract embedded cover art",
-        long_about = "Extract embedded cover art from an audio file to an image file.\n\nExamples:\n  tag-cli cover get -i song.mp3 -o cover.jpg"
+        long_about = "Extract embedded cover art from an audio file to an image file.
+
+Examples:
+  # Extract the front cover
+  tag-cli cover get -i song.mp3 -o cover.jpg
+
+  # Extract a different picture type
+  tag-cli cover get -i song.mp3 -o back.jpg --picture-type \"Back Cover\""
     )]
     Get(CoverGetArgs),
 
     #[command(
         about = "Set embedded cover art from an image",
-        long_about = "Set embedded cover art from an image file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli cover set -i song.mp3 -y cover.jpg\n  tag-cli cover set -i song.mp3 -y -o output.mp3 cover.jpg --cover-format jpeg --cover-quality 90"
+        long_about = "Set embedded cover art from an image file.
+
+When no output path is given, the input file is modified in place and requires confirmation. Use --dry-run to preview changes without writing.
+
+Examples:
+  # Preview setting embedded cover art
+  tag-cli cover set -i song.mp3 --dry-run cover.jpg
+
+  # Set embedded cover art in place
+  tag-cli cover set -i song.mp3 -y cover.jpg
+
+  # Reprocess cover art while writing a new output file
+  tag-cli cover set -i song.mp3 -y -o output.mp3 cover.jpg --cover-format jpeg --cover-quality 90
+
+  # Set a different picture type
+  tag-cli cover set -i song.mp3 -y cover.jpg --picture-type \"Back Cover\""
     )]
     Set(CoverSetArgs),
 
     #[command(
         about = "Remove embedded cover art",
-        long_about = "Remove embedded cover art from an audio file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli cover clear -i song.mp3 -y"
+        long_about = "Remove embedded cover art from an audio file.
+
+When no output path is given, the input file is modified in place and requires confirmation. Use --dry-run to preview changes without writing.
+
+Examples:
+  # Preview removing embedded cover art
+  tag-cli cover clear -i song.mp3 --dry-run
+
+  # Remove embedded cover art in place
+  tag-cli cover clear -i song.mp3 -y"
     )]
     Clear(CoverClearArgs),
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Extract embedded cover art",
-    long_about = "Extract embedded cover art from an audio file to an image file.\n\nExamples:\n  tag-cli cover get -i song.mp3 -o cover.jpg\n  tag-cli cover get -i song.mp3 -o back.jpg --picture-type \"Back Cover\""
-)]
 pub struct CoverGetArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
-    pub input: PathBuf,
-
-    #[arg(short = 'o', long, help = "Output image file path")]
-    pub output: PathBuf,
-
-    #[arg(
-        long,
-        value_name = "TYPE",
-        help = "Picture type to extract (e.g. 'Back Cover')"
-    )]
-    pub picture_type: Option<String>,
-}
-
-#[derive(Parser, Debug)]
-#[command(
-    about = "Set embedded cover art from an image",
-    long_about = "Set embedded cover art from an image file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli cover set -i song.mp3 -y cover.jpg\n  tag-cli cover set -i song.mp3 -y cover.jpg --cover-format jpeg --cover-quality 90\n  tag-cli cover set -i song.mp3 -y cover.jpg --picture-type \"Back Cover\""
-)]
-pub struct CoverSetArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
     pub input: PathBuf,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path; if omitted, the input file is edited in place"
+        value_name = "IMAGE",
+        help = "Output image file path"
+    )]
+    pub output: PathBuf,
+
+    #[arg(
+        long,
+        value_name = "TYPE",
+        help = "Picture type to extract (example: Back Cover)"
+    )]
+    pub picture_type: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+pub struct CoverSetArgs {
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
+    pub input: PathBuf,
+
+    #[arg(
+        short = 'o',
+        long,
+        value_name = "FILE",
+        help = "Output file path (default: edit input in place)"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Preview changes and print diff without writing")]
+    #[arg(long, help = "Preview changes and print a diff without writing")]
     pub dry_run: bool,
 
     #[command(flatten)]
@@ -368,46 +469,39 @@ pub struct CoverSetArgs {
     #[arg(
         long,
         value_name = "TYPE",
-        help = "Picture type to set (e.g. 'Back Cover')"
+        help = "Picture type to set (example: Back Cover)"
     )]
     pub picture_type: Option<String>,
 
-    #[arg(help = "Input image file path")]
+    #[arg(value_name = "IMAGE", help = "Input image file path")]
     pub image: PathBuf,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Remove embedded cover art",
-    long_about = "Remove embedded cover art from an audio file. When no output path is given, the input file is modified in place and requires confirmation.\n\nExamples:\n  tag-cli cover clear -i song.mp3 -y"
-)]
 pub struct CoverClearArgs {
-    #[arg(short = 'i', long, help = "Input audio file path")]
+    #[arg(short = 'i', long, value_name = "FILE", help = "Audio file path")]
     pub input: PathBuf,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output audio file path; if omitted, the input file is edited in place"
+        value_name = "FILE",
+        help = "Output file path (default: edit input in place)"
     )]
     pub output: Option<PathBuf>,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Preview changes and print diff without writing")]
+    #[arg(long, help = "Preview changes and print a diff without writing")]
     pub dry_run: bool,
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Apply a YAML manifest",
-    long_about = "Apply a YAML manifest to one or more audio files.\n\nExamples:\n  tag-cli apply -m manifest.yaml -y\n  tag-cli apply -m manifest.yaml -y --dry-run --fail-fast"
-)]
 pub struct ApplyArgs {
     #[arg(
         short = 'm',
@@ -415,21 +509,21 @@ pub struct ApplyArgs {
         alias = "filename",
         visible_short_alias = 'f',
         value_name = "MANIFEST",
-        help = "Path to the YAML manifest file"
+        help = "YAML manifest file path"
     )]
     pub filename: PathBuf,
 
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 
-    #[arg(long, help = "Preview changes and print diff without writing")]
+    #[arg(long, help = "Preview changes and print a diff without writing")]
     pub dry_run: bool,
 
-    #[arg(long, help = "Stop on first failure")]
+    #[arg(long, help = "Stop on the first file failure")]
     pub fail_fast: bool,
 
     #[command(flatten)]
@@ -440,35 +534,36 @@ pub struct ApplyArgs {
 pub struct ImageOptions {
     #[arg(
         long,
-        help = "Use the cover image as-is without reprocessing (default: cover art is reprocessed)"
+        help = "Use the cover image as-is without reprocessing (default: reprocess cover art)"
     )]
     pub no_process_cover: bool,
 
     #[arg(
         long,
         value_enum,
-        help = "Convert cover art to the specified format (jpeg, png); default preserves the source format"
+        value_name = "FORMAT",
+        help = "Convert cover art to a specific format (jpeg or png)"
     )]
     pub cover_format: Option<CoverFormat>,
 
     #[arg(
         long,
         value_name = "PIXELS",
-        help = "Resize cover art so max(width, height) <= PIXELS. Defaults depend on target container (e.g. MP3/WAV 1200, MP4/FLAC/Ogg 2048)"
+        help = "Resize cover art so max(width, height) <= PIXELS; defaults depend on target container"
     )]
     pub cover_max_size: Option<u32>,
 
     #[arg(
         long,
         value_name = "KB",
-        help = "Compress cover art so file size <= KB kilobytes. Defaults depend on target container (e.g. MP3/WAV 1200 KB, MP4/FLAC/Ogg 2048 KB)"
+        help = "Compress cover art so file size <= KB; defaults depend on target container"
     )]
     pub cover_max_file_size: Option<u32>,
 
     #[arg(
         long,
         value_name = "QUALITY",
-        help = "JPEG/PNG compression quality, 1-100 (default: 90)"
+        help = "JPEG/PNG compression quality from 1 to 100 (default: 90)"
     )]
     pub cover_quality: Option<u8>,
 }
@@ -500,7 +595,7 @@ impl ImageOptions {
     }
 }
 
-#[derive(ValueEnum, Debug, Clone, Copy)]
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Json,
     Yaml,
@@ -511,16 +606,6 @@ pub enum OutputFormat {
 pub enum CoverFormat {
     Jpeg,
     Png,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TemplateName {
-    Classical,
-    Podcast,
-    Radio,
-    Education,
-    Vinyl,
-    Release,
 }
 
 fn parse_key_value(s: &str) -> Result<(String, String), String> {
@@ -548,7 +633,7 @@ Cover extraction:
                           Only valid with --with-cover.
 
 Field filtering:
-  --fields FIELDS         Comma-separated allowlist (e.g. TITLE,ARTIST,ALBUM).
+  --fields FIELDS         Comma-separated allowlist (for example: TITLE,ARTIST,ALBUM).
   --exclude-fields FIELDS Comma-separated blocklist.
 
 Path style:
@@ -559,52 +644,47 @@ Multi-value tags are reduced to a single value (the first one) when written to t
 Unsupported or corrupt files are skipped and reported at the end.
 
 Examples:
-  Export a single file to stdout:
-    tag-cli export metadata -i song.mp3
+  # Export a single file to stdout
+  tag-cli export metadata -i song.mp3
 
-  Export all FLAC files to a manifest:
-    tag-cli export metadata -i \"**/*.flac\" -o manifest.yaml
+  # Export all FLAC files to a manifest
+  tag-cli export metadata -i \"**/*.flac\" -o manifest.yaml
 
-  Export a directory tree to per-file sidecars:
-    tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file
+  # Export a directory tree to per-file sidecars
+  tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file
 
-  Export with front cover images:
-    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover
+  # Export with front cover images
+  tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover
 
-  Export only a few fields:
-    tag-cli export metadata -i \"**/*.mp3\" --fields TITLE,ARTIST,ALBUM
+  # Export only a few fields
+  tag-cli export metadata -i \"**/*.mp3\" --fields TITLE,ARTIST,ALBUM
 
-  Stop on the first unreadable file:
-    tag-cli export metadata -i \"**/*.wav\" --fail-fast"
+  # Stop on the first unreadable file
+  tag-cli export metadata -i \"**/*.wav\" --fail-fast"
     )]
     Metadata(ExportMetadataArgs),
 }
 
 #[derive(Parser, Debug)]
-#[command(
-    about = "Export metadata from audio files",
-    long_about = "Export metadata and audio properties from audio files matched by glob patterns or literal paths.\n\nExamples:\n  tag-cli export metadata -i song.mp3\n  tag-cli export metadata -i \"**/*.flac\" -o report.json --format json\n  tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file"
-)]
 pub struct ExportMetadataArgs {
     #[arg(
         short = 'i',
         long = "input",
         required = true,
-        help = "Input glob pattern or literal audio file path; may be specified multiple times"
+        value_name = "PATTERN",
+        help = "Input glob pattern or literal audio file path; repeat for multiple inputs"
     )]
     pub input: Vec<PathBuf>,
 
     #[arg(
         short = 'o',
         long,
-        help = "Output path: file writes an aggregate manifest, directory writes per-file sidecars; stdout if omitted"
+        value_name = "PATH",
+        help = "Output path: file for aggregate manifest, directory for per-file sidecars; stdout if omitted"
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(
-        long,
-        help = "Force per-file sidecar output even when -o is a file path"
-    )]
+    #[arg(long, help = "Write one sidecar manifest per input file")]
     pub per_file: bool,
 
     #[arg(
@@ -629,11 +709,16 @@ pub struct ExportMetadataArgs {
 
     #[arg(
         long,
-        help = "Comma-separated allowlist of fields to include (e.g. TITLE,ARTIST,ALBUM)"
+        value_name = "FIELDS",
+        help = "Comma-separated allowlist of fields to include (example: TITLE,ARTIST,ALBUM)"
     )]
     pub fields: Option<String>,
 
-    #[arg(long, help = "Comma-separated blocklist of fields to exclude")]
+    #[arg(
+        long,
+        value_name = "FIELDS",
+        help = "Comma-separated blocklist of fields to exclude"
+    )]
     pub exclude_fields: Option<String>,
 
     #[arg(long, group = "path_style", help = "Use absolute paths in output")]
@@ -655,7 +740,7 @@ pub struct ExportMetadataArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for output overwrites; also respects TAG_CLI_YES=1/true or CI=true"
     )]
     pub yes: bool,
 }
@@ -663,6 +748,102 @@ pub struct ExportMetadataArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    use std::cell::Cell;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    thread_local! {
+        static WITH_ENV_DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn with_env<F>(tag_cli_yes: Option<&str>, ci: Option<&str>, f: F)
+    where
+        F: FnOnce(),
+    {
+        // Allow nested calls (e.g. tests that verify restoration) by tracking
+        // reentrancy depth and only acquiring the lock on the outer call.
+        let guard = WITH_ENV_DEPTH.with(|d| {
+            if d.get() == 0 {
+                Some(ENV_LOCK.lock().unwrap())
+            } else {
+                None
+            }
+        });
+        WITH_ENV_DEPTH.with(|d| d.set(d.get() + 1));
+
+        let old_tag_cli_yes = std::env::var("TAG_CLI_YES").ok();
+        let old_ci = std::env::var("CI").ok();
+
+        unsafe {
+            match tag_cli_yes {
+                Some(v) => std::env::set_var("TAG_CLI_YES", v),
+                None => std::env::remove_var("TAG_CLI_YES"),
+            }
+            match ci {
+                Some(v) => std::env::set_var("CI", v),
+                None => std::env::remove_var("CI"),
+            }
+        }
+
+        f();
+
+        unsafe {
+            match old_tag_cli_yes {
+                Some(v) => std::env::set_var("TAG_CLI_YES", v),
+                None => std::env::remove_var("TAG_CLI_YES"),
+            }
+            match old_ci {
+                Some(v) => std::env::set_var("CI", v),
+                None => std::env::remove_var("CI"),
+            }
+        }
+
+        WITH_ENV_DEPTH.with(|d| d.set(d.get() - 1));
+        drop(guard);
+    }
+
+    #[test]
+    fn is_confirmed_true_with_explicit_yes() {
+        with_env(None, None, || {
+            assert!(Cli::is_confirmed(true));
+        });
+    }
+
+    #[test]
+    fn is_confirmed_true_with_tag_cli_yes_true() {
+        with_env(Some("true"), None, || {
+            assert!(Cli::is_confirmed(false));
+        });
+    }
+
+    #[test]
+    fn is_confirmed_true_with_tag_cli_yes_one() {
+        with_env(Some("1"), None, || {
+            assert!(Cli::is_confirmed(false));
+        });
+    }
+
+    #[test]
+    fn is_confirmed_true_with_tag_cli_yes_uppercase() {
+        with_env(Some("TRUE"), None, || {
+            assert!(Cli::is_confirmed(false));
+        });
+    }
+
+    #[test]
+    fn is_confirmed_false_with_neutral_env() {
+        with_env(None, Some("false"), || {
+            assert!(!Cli::is_confirmed(false));
+        });
+    }
+
+    #[test]
+    fn is_confirmed_true_with_ci_true() {
+        with_env(None, Some("true"), || {
+            assert!(Cli::is_confirmed(false));
+        });
+    }
 
     #[test]
     fn image_options_jpeg_format() {
@@ -675,6 +856,20 @@ mod tests {
         };
         let config = opts.to_image_processing_config().unwrap();
         assert_eq!(config.target_format, Some(ImageTargetFormat::Jpeg));
+    }
+
+    #[test]
+    fn with_env_restores_existing_variables() {
+        // Nest two `with_env` calls so the inner one has existing variables to
+        // restore, covering the `Some(v)` restoration branches.
+        with_env(Some("initial-yes"), Some("initial-ci"), || {
+            with_env(Some("true"), Some("true"), || {
+                assert_eq!(std::env::var("TAG_CLI_YES").unwrap(), "true");
+                assert_eq!(std::env::var("CI").unwrap(), "true");
+            });
+            assert_eq!(std::env::var("TAG_CLI_YES").unwrap(), "initial-yes");
+            assert_eq!(std::env::var("CI").unwrap(), "initial-ci");
+        });
     }
 
     #[test]

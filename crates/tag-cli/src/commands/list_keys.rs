@@ -1,9 +1,8 @@
 use crate::cli::ListKeysArgs;
-use tag_core::error::TagCliError;
 use tag_core::output::OutputFormat;
 use tag_core::taglib::supported_property_keys;
 
-pub fn run(args: &ListKeysArgs) -> Result<(), TagCliError> {
+pub fn run(args: &ListKeysArgs) {
     let keys = supported_property_keys();
     match map_format(args.format) {
         OutputFormat::Json => {
@@ -18,7 +17,6 @@ pub fn run(args: &ListKeysArgs) -> Result<(), TagCliError> {
             }
         }
     }
-    Ok(())
 }
 
 fn map_format(format: Option<crate::cli::OutputFormat>) -> OutputFormat {

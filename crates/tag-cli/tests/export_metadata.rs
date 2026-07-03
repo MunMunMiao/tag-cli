@@ -109,8 +109,7 @@ fn export_metadata_skips_non_audio_files() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.to_lowercase().contains("readme.txt")
-            || stderr.to_lowercase().contains("skipped")
+        stderr.to_lowercase().contains("readme.txt") || stderr.to_lowercase().contains("skipped")
     );
 }
 
@@ -264,12 +263,7 @@ fn export_metadata_manifest_is_loadable_by_apply() {
     assert!(manifest_path.exists());
 
     let apply_output = Command::new(env!("CARGO_BIN_EXE_tag-cli"))
-        .args([
-            "apply",
-            "-m",
-            manifest_path.to_str().unwrap(),
-            "--dry-run",
-        ])
+        .args(["apply", "-m", manifest_path.to_str().unwrap(), "--dry-run"])
         .output()
         .expect("failed to run apply");
 

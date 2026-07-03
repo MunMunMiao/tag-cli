@@ -6,7 +6,7 @@ resolver = "3"
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(coverage)'] }
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [profile.release]

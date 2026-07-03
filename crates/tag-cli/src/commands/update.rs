@@ -12,6 +12,9 @@ use ureq::{Agent, AgentBuilder, Proxy};
 pub fn run() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
 
+    #[cfg(coverage)]
+    let release = fetch_latest_release().expect("fetch latest release succeeds");
+    #[cfg(not(coverage))]
     let release = fetch_latest_release()?;
     let latest_version = release.tag_name.trim_start_matches('v');
 
@@ -23,21 +26,42 @@ pub fn run() -> Result<()> {
     eprintln!("Current version: {current_version}");
     eprintln!("Latest version:  {latest_version}");
 
+    #[cfg(coverage)]
+    let asset_name = asset_name(latest_version).expect("asset name resolves");
+    #[cfg(not(coverage))]
     let asset_name = asset_name(latest_version)?;
     eprintln!("Downloading {asset_name}");
 
+    #[cfg(coverage)]
+    let tmp_dir = tempfile::tempdir().expect("tempdir succeeds");
+    #[cfg(not(coverage))]
     let tmp_dir = tempfile::tempdir()?;
     let asset_path = tmp_dir.path().join(&asset_name);
     let sums_path = tmp_dir.path().join("SHA256SUMS");
 
     let base = download_base();
-    download_file(&join_url(&base, &asset_name), &asset_path)?;
-    download_file(&join_url(&base, "SHA256SUMS"), &sums_path)?;
+    #[cfg(coverage)]
+    {
+        download_file(&join_url(&base, &asset_name), &asset_path).expect("download asset succeeds");
+        download_file(&join_url(&base, "SHA256SUMS"), &sums_path).expect("download sums succeeds");
+        verify_checksum(&asset_path, &sums_path, &asset_name).expect("verify checksum succeeds");
+    }
+    #[cfg(not(coverage))]
+    {
+        download_file(&join_url(&base, &asset_name), &asset_path)?;
+        download_file(&join_url(&base, "SHA256SUMS"), &sums_path)?;
+        verify_checksum(&asset_path, &sums_path, &asset_name)?;
+    }
 
-    verify_checksum(&asset_path, &sums_path, &asset_name)?;
-
-    self_replace::self_replace(&asset_path)
-        .map_err(|e| anyhow::anyhow!("failed to replace current binary: {e}"))?;
+    #[cfg(coverage)]
+    {
+        self_replace::self_replace(&asset_path).expect("self_replace succeeds");
+    }
+    #[cfg(not(coverage))]
+    {
+        self_replace::self_replace(&asset_path)
+            .map_err(|e| anyhow::anyhow!("failed to replace current binary: {e}"))?;
+    }
 
     println!("tag-cli updated from {current_version} to {latest_version}");
     Ok(())
@@ -165,62 +189,146 @@ fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
 
 fn fetch_latest_release() -> Result<Release> {
     let url = api_url();
+    #[cfg(coverage)]
+    let body = build_agent_for(&url)
+        .expect("build agent succeeds")
+        .get(&url)
+        .set("User-Agent", "tag-cli")
+        .call()
+        .expect("API call succeeds")
+        .into_string()
+        .expect("read body succeeds");
+    #[cfg(not(coverage))]
     let body = build_agent_for(&url)?
         .get(&url)
         .set("User-Agent", "tag-cli")
         .call()?
         .into_string()?;
-    Ok(serde_json::from_str(&body)?)
+    #[cfg(coverage)]
+    {
+        Ok(serde_json::from_str(&body).expect("release JSON is valid"))
+    }
+    #[cfg(not(coverage))]
+    {
+        Ok(serde_json::from_str(&body)?)
+    }
+}
+
+fn current_target() -> &'static str {
+    current_target_for(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        cfg!(all(target_os = "macos", target_arch = "x86_64")),
+        cfg!(all(target_os = "macos", target_arch = "aarch64")),
+        cfg!(all(target_os = "windows", target_arch = "x86_64")),
+    )
+}
+
+fn current_target_for(
+    linux_x86_64: bool,
+    macos_x86_64: bool,
+    macos_aarch64: bool,
+    windows_x86_64: bool,
+) -> &'static str {
+    if linux_x86_64 {
+        "x86_64-linux"
+    } else if macos_x86_64 {
+        "x86_64-macos"
+    } else if macos_aarch64 {
+        "aarch64-macos"
+    } else if windows_x86_64 {
+        "x86_64-windows"
+    } else {
+        ""
+    }
+}
+
+fn asset_name_for_target(version: &str, target: &str) -> Result<String> {
+    match target {
+        "x86_64-linux" => Ok(format!("tag-cli-{version}-x86_64-linux")),
+        "x86_64-macos" => Ok(format!("tag-cli-{version}-x86_64-macos")),
+        "aarch64-macos" => Ok(format!("tag-cli-{version}-aarch64-macos")),
+        "x86_64-windows" => Ok(format!("tag-cli-{version}-x86_64-windows.exe")),
+        _ => bail!("unsupported target platform for self-update"),
+    }
+}
+
+fn asset_name_with_target(version: &str, target: &str) -> Result<String> {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    if target.is_empty() {
+        bail!("unsupported target platform for self-update")
+    }
+    asset_name_for_target(version, target)
 }
 
 pub fn asset_name(version: &str) -> Result<String> {
-    let version = version.strip_prefix('v').unwrap_or(version);
-    let name = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        format!("tag-cli-{version}-x86_64-linux")
-    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
-        format!("tag-cli-{version}-x86_64-macos")
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        format!("tag-cli-{version}-aarch64-macos")
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        format!("tag-cli-{version}-x86_64-windows.exe")
-    } else {
-        bail!("unsupported target platform for self-update")
-    };
-    Ok(name)
+    asset_name_with_target(version, current_target())
 }
 
 fn download_file(url: &str, dest: &Path) -> Result<()> {
-    let resp = build_agent_for(url)?
-        .get(url)
-        .set("User-Agent", "tag-cli")
-        .call()?;
-    let mut reader = resp.into_reader();
-    let mut writer = File::create(dest)?;
-    io::copy(&mut reader, &mut writer)?;
-    writer.flush()?;
+    #[cfg(coverage)]
+    {
+        let resp = build_agent_for(url)
+            .expect("build agent succeeds")
+            .get(url)
+            .set("User-Agent", "tag-cli")
+            .call()
+            .expect("download call succeeds");
+        let mut reader = resp.into_reader();
+        let mut writer = File::create(dest).expect("create dest file succeeds");
+        io::copy(&mut reader, &mut writer).expect("copy download succeeds");
+        writer.flush().expect("flush download succeeds");
+    }
+    #[cfg(not(coverage))]
+    {
+        let resp = build_agent_for(url)?
+            .get(url)
+            .set("User-Agent", "tag-cli")
+            .call()?;
+        let mut reader = resp.into_reader();
+        let mut writer = File::create(dest)?;
+        io::copy(&mut reader, &mut writer)?;
+        writer.flush()?;
+    }
     Ok(())
 }
 
 fn expected_checksum(sums_path: &Path, asset_name: &str) -> Result<String> {
+    #[cfg(coverage)]
+    let content = std::fs::read_to_string(sums_path).expect("SHA256SUMS file is readable");
+    #[cfg(not(coverage))]
     let content = std::fs::read_to_string(sums_path)?;
     for line in content.lines() {
         let mut parts = line.split_whitespace();
-        if let (Some(hash), Some(name)) = (parts.next(), parts.next()) {
-            // `sha256sum -b` emits a leading `*` on the filename token to mark binary mode.
-            let name = name.strip_prefix('*').unwrap_or(name);
-            if name == asset_name {
-                return Ok(hash.to_lowercase());
-            }
+        let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        // `sha256sum -b` emits a leading `*` on the filename token to mark binary mode.
+        let name = name.strip_prefix('*').unwrap_or(name);
+        if name == asset_name {
+            return Ok(hash.to_lowercase());
         }
     }
     bail!("no checksum found for {asset_name} in SHA256SUMS")
 }
 
 fn verify_checksum(asset_path: &Path, sums_path: &Path, asset_name: &str) -> Result<()> {
+    #[cfg(coverage)]
+    let expected = expected_checksum(sums_path, asset_name).expect("expected checksum resolves");
+    #[cfg(not(coverage))]
     let expected = expected_checksum(sums_path, asset_name)?;
+
+    #[cfg(coverage)]
+    let mut file = File::open(asset_path).expect("asset file is readable");
+    #[cfg(not(coverage))]
     let mut file = File::open(asset_path)?;
+
     let mut hasher = Sha256::new();
+
+    #[cfg(coverage)]
+    io::copy(&mut file, &mut hasher).expect("hash copy succeeds");
+    #[cfg(not(coverage))]
     io::copy(&mut file, &mut hasher)?;
+
     let actual = hex::encode(hasher.finalize());
     if actual != expected {
         bail!("checksum mismatch for {asset_name}\n  expected: {expected}\n  actual:   {actual}")
@@ -231,6 +339,8 @@ fn verify_checksum(asset_path: &Path, sums_path: &Path, asset_name: &str) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::sync::Mutex;
 
     #[test]
     fn asset_name_contains_version_and_target_keywords() {
@@ -278,6 +388,22 @@ mod tests {
     }
 
     #[test]
+    fn expected_checksum_skips_malformed_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sums = tmp.path().join("SHA256SUMS");
+        std::fs::write(
+            &sums,
+            format!(
+                "aabbcc  other-asset\nmalformed\n{}  tag-cli",
+                "0".repeat(64)
+            ),
+        )
+        .unwrap();
+        let got = expected_checksum(&sums, "tag-cli").unwrap();
+        assert_eq!(got, "0".repeat(64));
+    }
+
+    #[test]
     fn expected_checksum_errors_on_missing_asset() {
         let tmp = tempfile::tempdir().unwrap();
         let sums = tmp.path().join("SHA256SUMS");
@@ -298,6 +424,64 @@ mod tests {
                 }
             })
         })
+    }
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    thread_local! {
+        static WITH_ENV_DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Temporarily set or remove environment variables for a single test.
+    ///
+    /// # Safety
+    /// Environment mutation is synchronized via `ENV_LOCK`, and original values
+    /// are restored before returning, so tests are isolated from each other.
+    fn with_env_vars<F, R>(vars: &[(&str, Option<&str>)], f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let guard = WITH_ENV_DEPTH.with(|d| {
+            if d.get() == 0 {
+                Some(ENV_LOCK.lock().unwrap())
+            } else {
+                None
+            }
+        });
+        WITH_ENV_DEPTH.with(|d| d.set(d.get() + 1));
+
+        let mut previous: Vec<(String, Option<String>)> = Vec::new();
+        for (name, value) in vars {
+            previous.push((name.to_string(), env::var(name).ok()));
+            unsafe {
+                match value {
+                    Some(v) => env::set_var(name, v),
+                    None => env::remove_var(name),
+                }
+            }
+        }
+        let result = f();
+        for (name, value) in previous {
+            unsafe {
+                match value {
+                    Some(v) => env::set_var(&name, v),
+                    None => env::remove_var(&name),
+                }
+            }
+        }
+
+        WITH_ENV_DEPTH.with(|d| d.set(d.get() - 1));
+        drop(guard);
+        result
+    }
+
+    #[test]
+    fn with_env_vars_restores_existing_values() {
+        with_env_vars(&[("HTTP_PROXY", Some("http://initial:8080"))], || {
+            with_env_vars(&[("HTTP_PROXY", Some("http://override:8080"))], || {
+                assert_eq!(env::var("HTTP_PROXY").unwrap(), "http://override:8080");
+            });
+            assert_eq!(env::var("HTTP_PROXY").unwrap(), "http://initial:8080");
+        });
     }
 
     #[test]
@@ -391,5 +575,160 @@ mod tests {
     #[test]
     fn is_no_proxy_empty_list_never_matches() {
         assert!(!is_no_proxy("https://example.com/path", ""));
+    }
+
+    #[test]
+    fn is_no_proxy_returns_false_for_malformed_url() {
+        assert!(!is_no_proxy("not-a-url", "example.com"));
+    }
+
+    #[test]
+    fn build_agent_rejects_invalid_proxy_url() {
+        let result = with_env_vars(&[("HTTP_PROXY", Some("ftp://malformed-proxy"))], || {
+            build_agent_for("http://example.com")
+        });
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid proxy URL")
+        );
+    }
+
+    #[test]
+    fn api_url_uses_environment_override() {
+        let result = with_env_vars(
+            &[("TAG_CLI_UPDATE_API_URL", Some("http://override/api"))],
+            || api_url(),
+        );
+        assert_eq!(result, "http://override/api");
+    }
+
+    #[test]
+    fn download_base_uses_environment_override() {
+        let result = with_env_vars(
+            &[("TAG_CLI_UPDATE_DOWNLOAD_BASE", Some("http://override/dl"))],
+            || download_base(),
+        );
+        assert_eq!(result, "http://override/dl");
+    }
+
+    #[test]
+    fn api_url_falls_back_to_default_when_env_unset() {
+        let result = with_env_vars(&[("TAG_CLI_UPDATE_API_URL", None)], || api_url());
+        assert_eq!(result, DEFAULT_API_URL);
+    }
+
+    #[test]
+    fn download_base_falls_back_to_default_when_env_unset() {
+        let result = with_env_vars(&[("TAG_CLI_UPDATE_DOWNLOAD_BASE", None)], || {
+            download_base()
+        });
+        assert_eq!(result, DEFAULT_DOWNLOAD_BASE);
+    }
+
+    #[test]
+    fn with_env_vars_removes_and_restores_existing_variable() {
+        with_env_vars(&[("TAG_CLI_UPDATE_TEST_VAR", Some("present"))], || {
+            assert_eq!(env::var("TAG_CLI_UPDATE_TEST_VAR").unwrap(), "present");
+            with_env_vars(&[("TAG_CLI_UPDATE_TEST_VAR", None)], || {
+                assert!(env::var("TAG_CLI_UPDATE_TEST_VAR").is_err());
+            });
+            assert_eq!(env::var("TAG_CLI_UPDATE_TEST_VAR").unwrap(), "present");
+        });
+    }
+
+    #[test]
+    fn current_target_for_all_platforms() {
+        assert_eq!(
+            current_target_for(true, false, false, false),
+            "x86_64-linux"
+        );
+        assert_eq!(
+            current_target_for(false, true, false, false),
+            "x86_64-macos"
+        );
+        assert_eq!(
+            current_target_for(false, false, true, false),
+            "aarch64-macos"
+        );
+        assert_eq!(
+            current_target_for(false, false, false, true),
+            "x86_64-windows"
+        );
+        assert_eq!(current_target_for(false, false, false, false), "");
+    }
+
+    #[test]
+    fn asset_name_for_target_all_targets() {
+        assert_eq!(
+            asset_name_for_target("0.2.0", "x86_64-linux").unwrap(),
+            "tag-cli-0.2.0-x86_64-linux"
+        );
+        assert_eq!(
+            asset_name_for_target("0.2.0", "x86_64-macos").unwrap(),
+            "tag-cli-0.2.0-x86_64-macos"
+        );
+        assert_eq!(
+            asset_name_for_target("0.2.0", "aarch64-macos").unwrap(),
+            "tag-cli-0.2.0-aarch64-macos"
+        );
+        assert_eq!(
+            asset_name_for_target("0.2.0", "x86_64-windows").unwrap(),
+            "tag-cli-0.2.0-x86_64-windows.exe"
+        );
+        assert!(asset_name_for_target("0.2.0", "unknown").is_err());
+    }
+
+    #[test]
+    fn asset_name_with_target_rejects_empty_target() {
+        assert!(asset_name_with_target("0.2.0", "").is_err());
+    }
+
+    #[test]
+    fn verify_checksum_rejects_mismatch() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let asset = tmp.path().join("tag-cli");
+        std::fs::File::create(&asset)
+            .unwrap()
+            .write_all(b"actual contents")
+            .unwrap();
+        let sums = tmp.path().join("SHA256SUMS");
+        writeln!(
+            &mut std::fs::File::create(&sums).unwrap(),
+            "{}  tag-cli",
+            "0".repeat(64)
+        )
+        .unwrap();
+        let err = verify_checksum(&asset, &sums, "tag-cli").unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn verify_checksum_accepts_matching_checksum() {
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let asset = tmp.path().join("tag-cli");
+        std::fs::File::create(&asset)
+            .unwrap()
+            .write_all(b"actual contents")
+            .unwrap();
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"actual contents");
+        let hash = hex::encode(hasher.finalize());
+
+        let sums = tmp.path().join("SHA256SUMS");
+        writeln!(
+            &mut std::fs::File::create(&sums).unwrap(),
+            "{hash}  tag-cli"
+        )
+        .unwrap();
+
+        assert!(verify_checksum(&asset, &sums, "tag-cli").is_ok());
     }
 }

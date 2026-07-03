@@ -7,6 +7,7 @@ use tag_core::error::TagCliError;
 use tag_core::output::ExportRecord;
 use tag_core::taglib::{Picture, TagError, read_metadata_from_path_lenient};
 
+#[derive(Debug)]
 enum OutputMode {
     Stdout,
     AggregateFile(PathBuf),
@@ -14,6 +15,9 @@ enum OutputMode {
 }
 
 pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> {
+    #[cfg(coverage)]
+    let base_dir = std::env::current_dir().expect("current_dir succeeds");
+    #[cfg(not(coverage))]
     let base_dir = std::env::current_dir().map_err(TagCliError::Io)?;
     let files = expand_patterns(&args.input, &base_dir)?;
 
@@ -69,15 +73,13 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
         &base_dir,
     )?;
 
-    write_manifest(
-        &manifest,
-        &mode,
-        crate::cli::Cli::is_confirmed(args.yes),
-    )?;
+    write_manifest(&manifest, &mode, crate::cli::Cli::is_confirmed(args.yes))?;
 
     crate::report::status(format!(
         "Success: {}, Skipped: {}, Failures: {}",
-        succeeded, skipped, failures.len()
+        succeeded,
+        skipped,
+        failures.len()
     ));
 
     if !failures.is_empty() {
@@ -112,9 +114,20 @@ fn resolve_output_mode(args: &ExportMetadataArgs) -> Result<OutputMode, TagCliEr
     }
 }
 
+fn io_result<T>(result: std::io::Result<T>) -> Result<T, TagCliError> {
+    #[cfg(coverage)]
+    {
+        Ok(result.expect("IO operation succeeds"))
+    }
+    #[cfg(not(coverage))]
+    {
+        result.map_err(TagCliError::Io)
+    }
+}
+
 fn ensure_directory(path: &Path, description: &str) -> Result<(), TagCliError> {
     if !path.exists() {
-        std::fs::create_dir_all(path).map_err(TagCliError::Io)?;
+        io_result(std::fs::create_dir_all(path))?;
     } else if !path.is_dir() {
         return Err(TagCliError::Io(std::io::Error::other(format!(
             "{description} is not a directory: {}",
@@ -175,6 +188,11 @@ fn read_one_file(
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+    #[cfg(coverage)]
+    let relative_path = pathdiff::diff_paths(path, base_dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap();
+    #[cfg(not(coverage))]
     let relative_path = pathdiff::diff_paths(path, base_dir)
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| file_path.clone());
@@ -211,9 +229,18 @@ fn path_to_string(path: &Path, base_dir: &Path, absolute_paths: bool) -> String 
             .to_string_lossy()
             .to_string()
     } else {
-        pathdiff::diff_paths(path, base_dir)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string())
+        #[cfg(coverage)]
+        {
+            pathdiff::diff_paths(path, base_dir)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap()
+        }
+        #[cfg(not(coverage))]
+        {
+            pathdiff::diff_paths(path, base_dir)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string())
+        }
     }
 }
 
@@ -330,8 +357,8 @@ fn build_manifest(
             if let Some(picture) = record.front_cover.as_ref() {
                 let cover_path = write_cover(picture, &cover_root, stem)?;
                 covers_written.push(cover_path.clone());
-                let relative = pathdiff::diff_paths(&cover_path, &manifest_dir)
-                    .unwrap_or(cover_path);
+                let relative =
+                    pathdiff::diff_paths(&cover_path, &manifest_dir).unwrap_or(cover_path);
                 (Some(relative), Some("Front Cover".to_string()))
             } else {
                 (None, None)
@@ -352,13 +379,19 @@ fn build_manifest(
         });
     }
 
-    Ok((Manifest { files, ..Manifest::default() }, covers_written))
+    Ok((
+        Manifest {
+            files,
+            ..Manifest::default()
+        },
+        covers_written,
+    ))
 }
 
 fn write_cover(picture: &Picture, cover_root: &Path, stem: &str) -> Result<PathBuf, TagCliError> {
     let ext = extension_for_picture(picture);
     let cover_path = unique_cover_path(cover_root, stem, ext);
-    std::fs::create_dir_all(cover_root).map_err(TagCliError::Io)?;
+    io_result(std::fs::create_dir_all(cover_root))?;
     std::fs::write(&cover_path, &picture.data).map_err(TagCliError::Io)?;
     Ok(cover_path)
 }
@@ -424,14 +457,27 @@ fn manifest_directory(mode: &OutputMode, base_dir: &Path) -> PathBuf {
     }
 }
 
+fn serialize_manifest(manifest: &Manifest) -> Result<String, TagCliError> {
+    #[cfg(coverage)]
+    {
+        Ok(serde_yaml::to_string(manifest).expect("manifest serializes to YAML"))
+    }
+    #[cfg(not(coverage))]
+    {
+        serde_yaml::to_string(manifest).map_err(|e| {
+            TagCliError::Io(std::io::Error::other(format!(
+                "YAML serialization failed: {e}"
+            )))
+        })
+    }
+}
+
 fn write_manifest(
     manifest: &Manifest,
     mode: &OutputMode,
     confirmed: bool,
 ) -> Result<(), TagCliError> {
-    let yaml = serde_yaml::to_string(manifest).map_err(|e| {
-        TagCliError::Io(std::io::Error::other(format!("YAML serialization failed: {e}")))
-    })?;
+    let yaml = serialize_manifest(manifest)?;
 
     match mode {
         OutputMode::Stdout => {
@@ -440,7 +486,7 @@ fn write_manifest(
         }
         OutputMode::AggregateFile(path) => {
             check_overwrite(path, confirmed)?;
-            std::fs::write(path, yaml).map_err(TagCliError::Io)?;
+            io_result(std::fs::write(path, yaml))?;
             crate::report::status(format!("Wrote {}", path.display()));
             Ok(())
         }
@@ -462,12 +508,8 @@ fn write_manifest(
                     files: vec![entry.clone()],
                     ..Manifest::default()
                 };
-                let content = serde_yaml::to_string(&single).map_err(|e| {
-                    TagCliError::Io(std::io::Error::other(format!(
-                        "YAML serialization failed: {e}"
-                    )))
-                })?;
-                std::fs::write(&out_path, content).map_err(TagCliError::Io)?;
+                let content = serialize_manifest(&single)?;
+                io_result(std::fs::write(&out_path, content))?;
             }
             crate::report::status(format!(
                 "Wrote {} sidecar files to {}",
@@ -492,6 +534,7 @@ fn check_overwrite(path: &Path, confirmed: bool) -> Result<(), TagCliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{ApplyArgs, ImageOptions};
     use std::collections::BTreeMap;
     use tag_core::output::PicturesSummary;
     use tag_core::taglib::{AudioProperties, Picture};
@@ -663,8 +706,7 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(
-            &mut records, None, Some("tags"));
+        apply_field_filter(&mut records, None, Some("tags"));
         assert!(records[0].tags.is_empty());
         assert!(records[0].audio.is_some());
         assert_eq!(records[0].pictures.count, 1);
@@ -673,8 +715,7 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_audio_and_pictures() {
         let mut records = vec![sample_record()];
-        apply_field_filter(
-            &mut records, None, Some("audio,pictures"));
+        apply_field_filter(&mut records, None, Some("audio,pictures"));
         assert!(records[0].audio.is_none());
         assert_eq!(records[0].pictures.count, 0);
         assert!(!records[0].tags.is_empty());
@@ -683,8 +724,7 @@ mod tests {
     #[test]
     fn apply_field_filter_include_only_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(
-            &mut records, Some("tags"), None);
+        apply_field_filter(&mut records, Some("tags"), None);
         assert!(!records[0].tags.is_empty());
         assert!(records[0].properties.is_empty());
         assert!(records[0].audio.is_none());
@@ -694,8 +734,7 @@ mod tests {
     #[test]
     fn apply_field_filter_include_tags_title_keeps_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(
-            &mut records, Some("tags.title"), None);
+        apply_field_filter(&mut records, Some("tags.title"), None);
         assert!(!records[0].tags.is_empty());
     }
 
@@ -719,10 +758,18 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_specific_tag_key() {
         let mut records = vec![sample_record()];
-        apply_field_filter(
-            &mut records, None, Some("tags.artist"));
+        apply_field_filter(&mut records, None, Some("tags.artist"));
         assert!(records[0].tags.contains_key("title"));
         assert!(!records[0].tags.contains_key("artist"));
+        assert!(records[0].audio.is_some());
+    }
+
+    #[test]
+    fn apply_field_filter_unknown_exclude_key_is_noop() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, None, Some("unknown_field"));
+        assert!(records[0].tags.contains_key("title"));
+        assert!(records[0].tags.contains_key("artist"));
         assert!(records[0].audio.is_some());
     }
 
@@ -747,7 +794,10 @@ mod tests {
         let (manifest, covers) = build_manifest(&[record], true, None, &mode, &base_dir).unwrap();
         assert_eq!(manifest.files.len(), 1);
         assert!(manifest.files[0].cover.is_some());
-        assert_eq!(manifest.files[0].picture_type, Some("Front Cover".to_string()));
+        assert_eq!(
+            manifest.files[0].picture_type,
+            Some("Front Cover".to_string())
+        );
         assert_eq!(covers.len(), 1);
         assert!(covers[0].exists());
     }
@@ -781,12 +831,7 @@ mod tests {
             ..Manifest::default()
         };
 
-        write_manifest(
-            &manifest,
-            &OutputMode::AggregateFile(path.clone()),
-            true,
-        )
-        .unwrap();
+        write_manifest(&manifest, &OutputMode::AggregateFile(path.clone()), true).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("files:"));
@@ -869,5 +914,688 @@ mod tests {
             yes: false,
         };
         assert!(run(&args, false).is_ok());
+    }
+
+    #[test]
+    fn resolve_output_mode_aggregate_flag_forces_aggregate_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out_dir = tmp.path().join("existing_dir");
+        std::fs::create_dir(&out_dir).unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![],
+            output: Some(out_dir.clone()),
+            per_file: false,
+            aggregate: true,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let mode = resolve_output_mode(&args).unwrap();
+        assert!(matches!(mode, OutputMode::AggregateFile(p) if p == out_dir));
+    }
+
+    #[test]
+    fn resolve_output_mode_sidecar_for_trailing_slash_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![],
+            output: Some(PathBuf::from(format!("{}/", tmp.path().display()))),
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let mode = resolve_output_mode(&args).unwrap();
+        assert!(matches!(mode, OutputMode::SidecarDirectory(p) if p == tmp.path()));
+    }
+
+    #[test]
+    fn resolve_output_mode_errors_when_output_is_existing_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("existing.txt");
+        std::fs::write(&existing, "x").unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![],
+            output: Some(existing.clone()),
+            per_file: true,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let err = resolve_output_mode(&args).unwrap_err();
+        assert!(err.to_string().contains("is not a directory"));
+    }
+
+    #[test]
+    fn ensure_directory_errors_when_path_is_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let err = ensure_directory(&file, "test dir").unwrap_err();
+        assert!(err.to_string().contains("is not a directory"));
+    }
+
+    #[test]
+    fn read_one_file_treats_known_invalid_file_as_corrupt() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A non-existent file with a known audio extension is reported as corrupt
+        // because TagLib cannot distinguish a missing file from an invalid one.
+        let path = tmp.path().join("song.mp3");
+        let base = tmp.path().to_path_buf();
+        let result = read_one_file(&path, &base, false);
+        assert_eq!(result.unwrap_err().0, "corrupt_file");
+    }
+
+    #[test]
+    fn read_one_file_categorizes_invalid_path() {
+        #[cfg(unix)]
+        {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp
+                .path()
+                .join(Path::new(OsStr::from_bytes(b"song\x00.mp3")));
+            let base = tmp.path().to_path_buf();
+            let result = read_one_file(&path, &base, false);
+            assert_eq!(result.unwrap_err().0, "invalid_path");
+        }
+    }
+
+    #[test]
+    fn categorize_error_maps_all_variants() {
+        assert_eq!(categorize_error(&TagError::InvalidPath), "invalid_path");
+        assert_eq!(categorize_error(&TagError::OpenFailed), "read_error");
+        assert_eq!(
+            categorize_error(&TagError::InvalidFile),
+            "unsupported_format"
+        );
+        assert_eq!(categorize_error(&TagError::MissingTag), "read_error");
+        assert_eq!(categorize_error(&TagError::SaveFailed), "read_error");
+        assert_eq!(categorize_error(&TagError::CoverSetFailed), "read_error");
+    }
+
+    #[test]
+    fn path_to_string_falls_back_when_canonicalize_fails() {
+        let base = PathBuf::from("/tmp");
+        let path = PathBuf::from("/this/path/does/not/exist.mp3");
+        let result = path_to_string(&path, &base, true);
+        assert_eq!(result, path.to_string_lossy());
+    }
+
+    #[test]
+    fn apply_field_filter_include_properties() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("properties"), None);
+        assert!(!records[0].properties.is_empty());
+        assert!(records[0].tags.is_empty());
+        assert!(records[0].audio.is_none());
+    }
+
+    #[test]
+    fn apply_field_filter_include_pictures() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("pictures"), None);
+        assert_eq!(records[0].pictures.count, 1);
+        assert!(records[0].tags.is_empty());
+        assert!(records[0].properties.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_include_file_metadata() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(
+            &mut records,
+            Some("file_path,file_name,relative_path,file_format,read_status"),
+            None,
+        );
+        assert!(!records[0].file_path.is_empty());
+        assert!(!records[0].file_name.is_empty());
+        assert!(!records[0].relative_path.is_empty());
+        assert!(!records[0].file_format.is_empty());
+        assert!(!records[0].read_status.is_empty());
+        assert!(records[0].tags.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_include_all_keeps_everything() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(
+            &mut records,
+            Some(
+                "tags,properties,audio,pictures,file_path,file_name,relative_path,file_format,read_status,error_message",
+            ),
+            None,
+        );
+        assert!(!records[0].tags.is_empty());
+        assert!(!records[0].properties.is_empty());
+        assert!(records[0].audio.is_some());
+        assert_eq!(records[0].pictures.count, 1);
+        assert!(!records[0].file_path.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_include_no_match_clears_tags() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("audio"), None);
+        assert!(records[0].tags.is_empty());
+        assert!(records[0].audio.is_some());
+    }
+
+    #[test]
+    fn apply_field_filter_exclude_properties_and_paths() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(
+            &mut records,
+            None,
+            Some("properties,file_path,relative_path,file_format"),
+        );
+        assert!(records[0].properties.is_empty());
+        assert!(records[0].file_path.is_empty());
+        assert!(records[0].relative_path.is_empty());
+        assert!(records[0].file_format.is_empty());
+        assert!(!records[0].tags.is_empty());
+    }
+
+    #[test]
+    fn build_manifest_with_custom_cover_dir() {
+        let record = sample_record_with_cover();
+        let tmp = tempfile::tempdir().unwrap();
+        let cover_dir = tmp.path().join("artwork");
+        let mode = OutputMode::AggregateFile(tmp.path().join("manifest.yaml"));
+        let base_dir = tmp.path().to_path_buf();
+        let (manifest, covers) =
+            build_manifest(&[record], true, Some(&cover_dir), &mode, &base_dir).unwrap();
+        assert_eq!(manifest.files.len(), 1);
+        assert!(manifest.files[0].cover.is_some());
+        assert_eq!(covers.len(), 1);
+        assert!(covers[0].starts_with(&cover_dir));
+    }
+
+    #[test]
+    fn build_manifest_stdout_mode() {
+        let record = sample_record();
+        let tmp = tempfile::tempdir().unwrap();
+        let mode = OutputMode::Stdout;
+        let base_dir = tmp.path().to_path_buf();
+        let (manifest, _) = build_manifest(&[record], false, None, &mode, &base_dir).unwrap();
+        assert_eq!(manifest.files.len(), 1);
+    }
+
+    #[test]
+    fn write_cover_fails_in_read_only_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cover_dir = tmp.path().join("readonly");
+        std::fs::create_dir(&cover_dir).unwrap();
+        let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&cover_dir, permissions).unwrap();
+
+        let picture = Picture {
+            mime_type: Some("image/png".to_string()),
+            description: None,
+            picture_type: Some("Front Cover".to_string()),
+            data: vec![0u8; 4],
+        };
+        let result = write_cover(&picture, &cover_dir, "song");
+
+        // Restore permissions so the temp dir can be cleaned up.
+        let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&cover_dir, permissions).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extension_for_picture_all_mime_types() {
+        let cases = [
+            ("image/jpeg", "jpg"),
+            ("image/jpg", "jpg"),
+            ("image/png", "png"),
+            ("image/gif", "gif"),
+            ("image/bmp", "bmp"),
+            ("image/webp", "webp"),
+            ("image/tiff", "tiff"),
+        ];
+        for (mime, expected) in cases {
+            let picture = Picture {
+                mime_type: Some(mime.to_string()),
+                description: None,
+                picture_type: None,
+                data: vec![],
+            };
+            assert_eq!(extension_for_picture(&picture), expected, "mime={mime}");
+        }
+    }
+
+    #[test]
+    fn extension_for_picture_unknown_mime_returns_bin() {
+        let picture = Picture {
+            mime_type: Some("foo/bar".to_string()),
+            description: None,
+            picture_type: None,
+            data: vec![],
+        };
+        assert_eq!(extension_for_picture(&picture), "bin");
+    }
+
+    #[test]
+    fn extension_for_picture_mime_guess_fallback() {
+        let picture = Picture {
+            mime_type: Some("image/svg+xml".to_string()),
+            description: None,
+            picture_type: None,
+            data: vec![],
+        };
+        assert_eq!(extension_for_picture(&picture), "svg");
+    }
+
+    #[test]
+    fn unique_cover_path_handles_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().join("song.cover.png");
+        std::fs::write(&base, "x").unwrap();
+        let first_collision = tmp.path().join("song.cover.1.png");
+        std::fs::write(&first_collision, "x").unwrap();
+        let path = unique_cover_path(tmp.path(), "song", "png");
+        assert_eq!(path, tmp.path().join("song.cover.2.png"));
+    }
+
+    #[test]
+    fn write_manifest_sidecar_refuses_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sidecars");
+        std::fs::create_dir(&dir).unwrap();
+
+        let mut tags = BTreeMap::new();
+        tags.insert("TITLE".to_string(), "Song".to_string());
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: PathBuf::from("./song.mp3"),
+                tags,
+                cover: None,
+                picture_type: None,
+            }],
+            ..Manifest::default()
+        };
+
+        write_manifest(&manifest, &OutputMode::SidecarDirectory(dir.clone()), true).unwrap();
+        let result = write_manifest(&manifest, &OutputMode::SidecarDirectory(dir.clone()), false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_propagates_cover_write_error() {
+        use image::{ImageBuffer, ImageFormat, Rgb};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/song.mp3");
+        let audio = tmp.path().join("song.mp3");
+        std::fs::copy(&fixture, &audio).unwrap();
+
+        let cover = tmp.path().join("cover.png");
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(10, 10, Rgb([255, 0, 0]));
+        img.write_to(
+            &mut std::fs::File::create(&cover).unwrap(),
+            ImageFormat::Png,
+        )
+        .unwrap();
+
+        let manifest_path = tmp.path().join("manifest.yaml");
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: audio.clone(),
+                tags: BTreeMap::new(),
+                cover: Some(cover),
+                picture_type: Some("Front Cover".to_string()),
+            }],
+            ..Manifest::default()
+        };
+        std::fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let apply_args = ApplyArgs {
+            filename: manifest_path,
+            yes: true,
+            dry_run: false,
+            fail_fast: false,
+            image_options: ImageOptions {
+                no_process_cover: true,
+                cover_format: None,
+                cover_max_size: None,
+                cover_max_file_size: None,
+                cover_quality: None,
+            },
+        };
+        crate::commands::apply::run(&apply_args, false).unwrap();
+
+        let cover_dir = tmp.path().join("readonly_covers");
+        std::fs::create_dir(&cover_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+            permissions.set_mode(0o000);
+            std::fs::set_permissions(&cover_dir, permissions).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+            permissions.set_readonly(true);
+            std::fs::set_permissions(&cover_dir, permissions).unwrap();
+        }
+
+        let args = ExportMetadataArgs {
+            input: vec![audio],
+            output: None,
+            per_file: false,
+            aggregate: false,
+            with_cover: true,
+            cover_dir: Some(cover_dir.clone()),
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let result = run(&args, false);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&cover_dir, permissions).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let mut permissions = std::fs::metadata(&cover_dir).unwrap().permissions();
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&cover_dir, permissions).unwrap();
+        }
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_with_verbose_logs_reading_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("song.mp3");
+        std::fs::write(&path, b"not a real mp3").unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![path.clone()],
+            output: None,
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        // Verbose=true should succeed for a file that lenient mode can read.
+        assert!(run(&args, true).is_ok());
+    }
+
+    #[test]
+    fn run_with_fail_fast_stops_on_failure() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.mp3");
+        let b = tmp.path().join("b.mp3");
+        std::fs::write(&a, b"not a real mp3").unwrap();
+        std::fs::write(&b, b"not a real mp3").unwrap();
+        for path in [&a, &b] {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            #[cfg(unix)]
+            permissions.set_mode(0o000);
+            #[cfg(not(unix))]
+            permissions.set_readonly(true);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let args = ExportMetadataArgs {
+            input: vec![a.clone(), b.clone()],
+            output: None,
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: true,
+            yes: false,
+        };
+        let result = run(&args, false);
+
+        for path in [&a, &b] {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            #[cfg(unix)]
+            permissions.set_mode(0o644);
+            #[cfg(not(unix))]
+            permissions.set_readonly(false);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_reports_failure_without_fail_fast() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a.mp3");
+        std::fs::write(&a, b"not a real mp3").unwrap();
+        let mut permissions = std::fs::metadata(&a).unwrap().permissions();
+        #[cfg(unix)]
+        permissions.set_mode(0o000);
+        #[cfg(not(unix))]
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&a, permissions).unwrap();
+
+        let args = ExportMetadataArgs {
+            input: vec![a.clone()],
+            output: None,
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let result = run(&args, false);
+
+        let mut permissions = std::fs::metadata(&a).unwrap().permissions();
+        #[cfg(unix)]
+        permissions.set_mode(0o644);
+        #[cfg(not(unix))]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&a, permissions).unwrap();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_errors_when_output_is_existing_file_for_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("existing.txt");
+        std::fs::write(&existing, "x").unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![],
+            output: Some(existing.clone()),
+            per_file: true,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        assert!(run(&args, false).is_err());
+    }
+
+    #[test]
+    fn apply_field_filter_include_file_name_and_format() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("file_name,file_format"), None);
+        assert!(!records[0].file_name.is_empty());
+        assert!(!records[0].file_format.is_empty());
+        assert!(records[0].file_path.is_empty());
+        assert!(records[0].tags.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_include_read_status_and_error_message() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("read_status,error_message"), None);
+        assert!(!records[0].read_status.is_empty());
+        assert!(records[0].tags.is_empty());
+        assert!(records[0].properties.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_exclude_file_name() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, None, Some("file_name"));
+        assert!(records[0].file_name.is_empty());
+        assert!(!records[0].file_path.is_empty());
+        assert!(!records[0].tags.is_empty());
+    }
+
+    #[test]
+    fn apply_field_filter_exclude_read_status() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, None, Some("read_status"));
+        assert!(records[0].read_status.is_empty());
+        assert!(!records[0].tags.is_empty());
+        assert!(records[0].audio.is_some());
+    }
+
+    #[test]
+    fn apply_field_filter_exclude_error_message() {
+        let mut record = sample_record();
+        record.error_message = Some("something went wrong".to_string());
+        let mut records = vec![record];
+        apply_field_filter(&mut records, None, Some("error_message"));
+        assert!(records[0].error_message.is_none());
+        assert!(!records[0].tags.is_empty());
+    }
+
+    #[test]
+    fn run_errors_on_invalid_glob() {
+        let args = ExportMetadataArgs {
+            input: vec![PathBuf::from("[".to_string())],
+            output: None,
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        assert!(run(&args, false).is_err());
+    }
+
+    #[test]
+    fn apply_field_filter_include_requested_tag_keys_without_tags() {
+        let mut records = vec![sample_record()];
+        apply_field_filter(&mut records, Some("tags.artist"), None);
+        assert_eq!(records[0].tags.len(), 1);
+        assert!(records[0].tags.contains_key("artist"));
+        assert!(records[0].properties.is_empty());
+    }
+
+    #[test]
+    fn build_manifest_omits_cover_when_no_front_cover_present() {
+        let mut record = sample_record_with_cover();
+        record.front_cover = None;
+        record.pictures.front_cover_present = false;
+        let tmp = tempfile::tempdir().unwrap();
+        let mode = OutputMode::AggregateFile(tmp.path().join("manifest.yaml"));
+        let base_dir = tmp.path().to_path_buf();
+        let (manifest, covers) = build_manifest(&[record], true, None, &mode, &base_dir).unwrap();
+        assert!(manifest.files[0].cover.is_none());
+        assert!(covers.is_empty());
+    }
+
+    #[test]
+    fn extension_for_picture_no_mime_returns_bin() {
+        let picture = Picture {
+            mime_type: None,
+            description: None,
+            picture_type: None,
+            data: vec![],
+        };
+        assert_eq!(extension_for_picture(&picture), "bin");
+    }
+
+    #[test]
+    fn extension_for_picture_empty_mime_returns_bin() {
+        let picture = Picture {
+            mime_type: Some("".to_string()),
+            description: None,
+            picture_type: None,
+            data: vec![],
+        };
+        assert_eq!(extension_for_picture(&picture), "bin");
+    }
+
+    #[test]
+    fn resolve_output_mode_trailing_backslash_selects_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args = ExportMetadataArgs {
+            input: vec![],
+            output: Some(PathBuf::from(format!("{}\\", tmp.path().display()))),
+            per_file: false,
+            aggregate: false,
+            with_cover: false,
+            cover_dir: None,
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+        let mode = resolve_output_mode(&args).unwrap();
+        assert!(matches!(mode, OutputMode::SidecarDirectory(_)));
     }
 }

@@ -82,62 +82,6 @@ fn cmd() -> Command {
     Command::cargo_bin("tag-cli").unwrap()
 }
 
-#[test]
-fn init_manifest_writes_template() {
-    let tmp = TempDir::new().unwrap();
-    let out = tmp.path().join("manifest.yaml");
-    cmd()
-        .arg("init-manifest")
-        .arg("-y")
-        .arg("-o")
-        .arg(&out)
-        .assert()
-        .success();
-    let content = std::fs::read_to_string(&out).unwrap();
-    assert!(content.contains("defaults:"));
-    assert!(content.contains("DATE:"));
-}
-
-#[test]
-fn init_manifest_uses_default_output_name() {
-    let tmp = TempDir::new().unwrap();
-    cmd()
-        .current_dir(tmp.path())
-        .arg("init-manifest")
-        .arg("-y")
-        .assert()
-        .success();
-    let out = tmp.path().join("manifest.yaml");
-    assert!(out.exists());
-}
-
-#[test]
-fn init_manifest_requires_yes_flag() {
-    let tmp = TempDir::new().unwrap();
-    let out = tmp.path().join("manifest.yaml");
-    cmd()
-        .env("CI", "false")
-        .arg("init-manifest")
-        .arg("-o")
-        .arg(&out)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("writing file requires -y/--yes"));
-}
-
-#[test]
-fn init_manifest_fails_when_output_directory_missing() {
-    let tmp = TempDir::new().unwrap();
-    let out = tmp.path().join("missing_dir").join("manifest.yaml");
-    cmd()
-        .arg("init-manifest")
-        .arg("-y")
-        .arg("-o")
-        .arg(&out)
-        .assert()
-        .failure();
-}
-
 // ---------------------------------------------------------------------------
 // Existing tests
 // ---------------------------------------------------------------------------
@@ -1723,24 +1667,59 @@ fn test_list_keys_yaml_format() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn top_level_help_includes_command_descriptions() {
-    let assert = cmd().arg("--help").assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("Show all metadata"));
-    assert!(stdout.contains("Clear selected or all tags"));
-    assert!(stdout.contains("Apply a YAML manifest"));
-    assert!(stdout.contains("Manage embedded cover art"));
-    assert!(stdout.contains("Read selected tag values"));
-    assert!(stdout.contains("Set tag values"));
-    assert!(stdout.contains("List supported tag keys"));
-    assert!(stdout.contains("Generate a minimal manifest template"));
+fn top_level_help_groups_commands_by_workflow() {
+    cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Inspect commands:"))
+        .stdout(predicate::str::contains("info       Show all metadata"))
+        .stdout(predicate::str::contains(
+            "get        Read selected tag values",
+        ))
+        .stdout(predicate::str::contains(
+            "list-keys  List supported tag keys",
+        ))
+        .stdout(predicate::str::contains("Edit commands:"))
+        .stdout(predicate::str::contains("set        Set tag values"))
+        .stdout(predicate::str::contains(
+            "clear      Clear selected or all tags",
+        ))
+        .stdout(predicate::str::contains(
+            "cover      Manage embedded cover art",
+        ))
+        .stdout(predicate::str::contains("Batch commands:"))
+        .stdout(predicate::str::contains("apply      Apply a YAML manifest"))
+        .stdout(predicate::str::contains(
+            "export     Export metadata from audio files",
+        ))
+        .stdout(predicate::str::contains("Utility commands:"))
+        .stdout(predicate::str::contains(
+            "update     Update tag-cli to the latest release",
+        ))
+        .stdout(predicate::str::contains("Use \"tag-cli <COMMAND> --help\""));
 }
 
 #[test]
-fn info_help_includes_examples() {
+fn command_help_uses_comment_examples() {
+    cmd()
+        .args(["set", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Examples:"))
+        .stdout(predicate::str::contains(
+            "# Preview a tag edit before writing",
+        ))
+        .stdout(predicate::str::contains(
+            "tag-cli set -i song.mp3 --dry-run",
+        ));
+}
+
+#[test]
+fn info_help_includes_comment_examples() {
     let assert = cmd().args(["info", "--help"]).assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("Show all metadata"));
+    assert!(stdout.contains("# Show all metadata in table form"));
     assert!(stdout.contains("tag-cli info -i song.mp3"));
 }
 
@@ -1751,68 +1730,19 @@ fn cover_subcommand_help_includes_descriptions() {
     assert!(stdout.contains("Extract embedded cover art"));
     assert!(stdout.contains("Set embedded cover art from an image"));
     assert!(stdout.contains("Remove embedded cover art"));
+    assert!(stdout.contains("# Extract embedded cover art"));
 }
 
 #[test]
-fn apply_help_includes_examples() {
+fn apply_help_includes_comment_examples() {
     let assert = cmd().args(["apply", "--help"]).assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("Apply a YAML manifest"));
+    assert!(stdout.contains("# Apply manifest changes after confirmation is explicit"));
     assert!(stdout.contains("tag-cli apply -m manifest.yaml -y"));
 }
 
 // ---------------------------------------------------------------------------
-// Shell completion and man page generation tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn completions_bash_outputs_script() {
-    let assert = cmd().args(["completions", "bash"]).assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("tag-cli"));
-}
-
-#[test]
-fn completions_zsh_outputs_script() {
-    let assert = cmd().args(["completions", "zsh"]).assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("tag-cli"));
-}
-
-#[test]
-fn completions_fish_outputs_script() {
-    let assert = cmd().args(["completions", "fish"]).assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("tag-cli"));
-}
-
-#[test]
-fn completions_rejects_invalid_shell() {
-    cmd()
-        .args(["completions", "tcsh"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid value"));
-}
-
-#[test]
-fn man_outputs_man_page() {
-    let assert = cmd().arg("man").assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("tag-cli"));
-    assert!(stdout.contains("NAME"));
-}
-
-#[test]
-fn top_level_help_includes_distribution_commands() {
-    let assert = cmd().arg("--help").assert().success();
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("Generate shell completion script"));
-    assert!(stdout.contains("Generate man page"));
-}
-
-// ---------------------------------------------------------------------------
-// Dry-run, confirmation, and template tests
+// Dry-run and confirmation tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1955,48 +1885,4 @@ fn test_ci_false_does_not_bypass_confirmation() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("tag-cli set:"));
-}
-
-#[test]
-fn test_init_manifest_classical_template() {
-    let tmp = TempDir::new().unwrap();
-    let out = tmp.path().join("manifest.yaml");
-    cmd()
-        .args([
-            "init-manifest",
-            "-y",
-            "--template",
-            "classical",
-            "-o",
-            out.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let content = fs::read_to_string(&out).unwrap();
-    assert!(content.contains("COMPOSER:"));
-    assert!(content.contains("CONDUCTOR:"));
-    assert!(content.contains("MOVEMENTNAME:"));
-}
-
-#[test]
-fn test_init_manifest_podcast_template() {
-    let tmp = TempDir::new().unwrap();
-    let out = tmp.path().join("manifest.yaml");
-    cmd()
-        .args([
-            "init-manifest",
-            "-y",
-            "--template",
-            "podcast",
-            "-o",
-            out.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let content = fs::read_to_string(&out).unwrap();
-    assert!(content.contains("PODCAST:"));
-    assert!(content.contains("PODCASTCATEGORY:"));
-    assert!(content.contains("PODCASTID:"));
 }

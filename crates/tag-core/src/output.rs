@@ -20,7 +20,7 @@ struct InfoOutput<'a> {
     pictures: Vec<PictureSummary>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PictureSummary {
     mime_type: Option<String>,
     picture_type: Option<String>,
@@ -37,7 +37,7 @@ impl PictureSummary {
     }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ExportRecord {
     pub file_path: String,
     pub file_name: String,
@@ -53,7 +53,7 @@ pub struct ExportRecord {
     pub error_message: Option<String>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PicturesSummary {
     pub count: usize,
     pub front_cover_present: bool,
@@ -441,6 +441,55 @@ mod tests {
 
         let tags = normalize_tags(&props);
         assert_eq!(tags.get("initial_key"), Some(&"C#".to_string()));
+    }
+
+    #[test]
+    fn normalize_tags_maps_all_common_keys() {
+        let mut props = BTreeMap::new();
+        props.insert("ALBUM".to_string(), vec!["Album".to_string()]);
+        props.insert("GENRE".to_string(), vec!["Genre".to_string()]);
+        props.insert("DATE".to_string(), vec!["2024".to_string()]);
+        props.insert("YEAR".to_string(), vec!["2024".to_string()]);
+        props.insert("TRACKNUMBER".to_string(), vec!["1".to_string()]);
+        props.insert("TRACKTOTAL".to_string(), vec!["10".to_string()]);
+        props.insert("DISCNUMBER".to_string(), vec!["1".to_string()]);
+        props.insert("DISCTOTAL".to_string(), vec!["2".to_string()]);
+        props.insert("COMPOSER".to_string(), vec!["Composer".to_string()]);
+        props.insert("PUBLISHER".to_string(), vec!["Publisher".to_string()]);
+        props.insert("COPYRIGHT".to_string(), vec!["Copyright".to_string()]);
+        props.insert("COMMENT".to_string(), vec!["Comment".to_string()]);
+        props.insert("DESCRIPTION".to_string(), vec!["Description".to_string()]);
+        props.insert("URL".to_string(), vec!["https://example.com".to_string()]);
+        props.insert("ISRC".to_string(), vec!["ISRC123".to_string()]);
+        props.insert("LABEL".to_string(), vec!["Label".to_string()]);
+        props.insert("CATALOGNUMBER".to_string(), vec!["CAT123".to_string()]);
+        props.insert("LYRICS".to_string(), vec!["Lyrics".to_string()]);
+        props.insert("LANGUAGE".to_string(), vec!["eng".to_string()]);
+        props.insert("EXPLICIT".to_string(), vec!["yes".to_string()]);
+        props.insert("BPM".to_string(), vec!["120".to_string()]);
+
+        let tags = normalize_tags(&props);
+        assert_eq!(tags.get("album"), Some(&"Album".to_string()));
+        assert_eq!(tags.get("genre"), Some(&"Genre".to_string()));
+        assert_eq!(tags.get("date"), Some(&"2024".to_string()));
+        assert_eq!(tags.get("year"), Some(&"2024".to_string()));
+        assert_eq!(tags.get("track_number"), Some(&"1".to_string()));
+        assert_eq!(tags.get("track_total"), Some(&"10".to_string()));
+        assert_eq!(tags.get("disc_number"), Some(&"1".to_string()));
+        assert_eq!(tags.get("disc_total"), Some(&"2".to_string()));
+        assert_eq!(tags.get("composer"), Some(&"Composer".to_string()));
+        assert_eq!(tags.get("publisher"), Some(&"Publisher".to_string()));
+        assert_eq!(tags.get("copyright"), Some(&"Copyright".to_string()));
+        assert_eq!(tags.get("comment"), Some(&"Comment".to_string()));
+        assert_eq!(tags.get("description"), Some(&"Description".to_string()));
+        assert_eq!(tags.get("url"), Some(&"https://example.com".to_string()));
+        assert_eq!(tags.get("isrc"), Some(&"ISRC123".to_string()));
+        assert_eq!(tags.get("label"), Some(&"Label".to_string()));
+        assert_eq!(tags.get("catalog_number"), Some(&"CAT123".to_string()));
+        assert_eq!(tags.get("lyrics"), Some(&"Lyrics".to_string()));
+        assert_eq!(tags.get("language"), Some(&"eng".to_string()));
+        assert_eq!(tags.get("explicit"), Some(&"yes".to_string()));
+        assert_eq!(tags.get("bpm"), Some(&"120".to_string()));
     }
 
     #[test]

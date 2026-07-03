@@ -15,8 +15,6 @@ path = "src/main.rs"
 tag-core = { path = "../tag-core" }
 taglib-rs = { path = "../taglib-rs" }
 clap = { version = "4", features = ["derive"] }
-clap_complete = "4"
-clap_mangen = "0.3"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -59,7 +59,6 @@ Prefer a manual install? Download prebuilt binaries from [GitHub Releases](https
 - `--dry-run` does not modify audio files, but `apply` still decodes and re-encodes cover images for validation. Missing or corrupt covers cause preview failures.
 - In-place writes (`set`, `clear`, `cover set`, `cover clear`, `apply`) require confirmation. Writing to a new file with `-o` does not.
 - `export metadata` requires confirmation only when overwriting an existing aggregated report or sidecar file. Output to stdout does not.
-- `init-manifest` always requires confirmation because it creates or overwrites the output file.
 
 <a id="quick-start"></a>
 ## Quick start
@@ -67,7 +66,7 @@ Prefer a manual install? Download prebuilt binaries from [GitHub Releases](https
 ```bash
 # Verify the installation
 $ tag-cli --version
-tag-cli 0.1.0
+tag-cli 0.1.1
 
 # List supported tag keys
 $ tag-cli list-keys
@@ -106,7 +105,6 @@ $ tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me"
 - [Global options and safety behavior](#global-options)
 - [Command reference](#command-reference)
 - [Declarative batch editing with apply](#apply)
-- [init-manifest templates](#init-manifest-templates)
 - [Image processing behavior](#image-processing)
 - [Batch editing safety checklist](#batch-safety-checklist)
 - [Automation examples](#automation-examples)
@@ -127,7 +125,6 @@ $ tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me"
 - Automatic cover processing: scaling, format selection, EXIF/metadata stripping, and size limits.
 - Output formats: human-readable tables, JSON, and YAML for `info`, `get`, and `list-keys`; `export metadata` emits an apply-ready YAML manifest.
 - `--dry-run` preview for all write operations that support it.
-- Scenario-oriented manifest templates via `init-manifest --template`.
 - Environment-variable confirmation for scripting and CI (`TAG_CLI_YES=1` or `CI=true`).
 
 <a id="prerequisites"></a>
@@ -170,7 +167,7 @@ curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh 
 Install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh | bash -s -- --version v0.1.1
 ```
 
 Install to a custom directory:
@@ -184,7 +181,7 @@ curl -fsSL https://raw.githubusercontent.com/MunMunMiao/tag-cli/main/install.sh 
 Download raw binaries for Linux or macOS from [GitHub Releases](https://github.com/MunMunMiao/tag-cli/releases), then verify the published SHA256 checksum before moving the binary into your `PATH`.
 
 ```bash
-VERSION=0.1.0
+VERSION=0.1.1
 TARGET=x86_64-linux  # or x86_64-macos, aarch64-macos
 
 # Download the binary and checksum file
@@ -244,7 +241,7 @@ rmdir "$HOME/.local/bin" 2>/dev/null || true
 
 ```bash
 $ tag-cli --version
-tag-cli 0.1.0
+tag-cli 0.1.1
 
 $ tag-cli list-keys
 TITLE
@@ -325,7 +322,7 @@ Embedded covers are ultimately written as **JPEG** or **PNG**. The format is sel
 
 ### Write confirmation priority
 
-Destructive commands (`set`, `clear`, `cover set`, `cover clear`, `apply`, `init-manifest`, `export metadata` when writing files) require confirmation. Confirmation sources take priority in this order:
+Destructive commands (`set`, `clear`, `cover set`, `cover clear`, `apply`, `export metadata` when writing files) require confirmation. Confirmation sources take priority in this order:
 
 | Priority | Source | Description |
 |----------|--------|-------------|
@@ -341,9 +338,8 @@ If none of these sources are satisfied, the write command exits with an error an
 |---------|------------------------|-------|
 | `set`, `clear`, `cover set`, `cover clear` | Only for in-place edits | Using `-o` to write a new file skips confirmation |
 | `apply` | Yes | Replaces tags on every matched file |
-| `init-manifest` | Always | Creates or overwrites the output file |
 | `export metadata` | Only when overwriting an existing file | Stdout and new files do not require confirmation |
-| `info`, `get`, `cover get`, `list-keys`, `completions`, `man` | No | Read-only |
+| `info`, `get`, `cover get`, `list-keys` | No | Read-only |
 
 > [!IMPORTANT]
 > `-o` must be a different path than `-i`. If they are the same, the command fails with `output path cannot be the same as input path`.
@@ -354,10 +350,10 @@ If none of these sources are satisfied, the write command exits with an error an
 |------|---------|---------------------|
 | `-v`, `--verbose` | Output DEBUG-level logs | All commands |
 | `-i <path>` | Input audio file path or glob pattern | `info`, `get`, `set`, `clear`, `cover`, `export metadata` |
-| `-o <path>` | Output path: a file for most commands, a directory for sidecar exports, or an image file for cover get | `set`, `clear`, `cover get`, `cover set`, `cover clear`, `init-manifest`, `export metadata` |
+| `-o <path>` | Output path: a file for most commands, a directory for sidecar exports, or an image file for cover get | `set`, `clear`, `cover get`, `cover set`, `cover clear`, `export metadata` |
 | `-f <format>` | Output format, or compatibility alias for the manifest path in `apply` | `info`, `get`, `list-keys`, `apply` (alias for `-m`) |
 | `-y`, `--yes` | Skip confirmation prompt | Write commands |
-| `--dry-run` | Preview changes without writing files | `set`, `clear`, `cover set`, `cover clear`, `apply`; not supported by `init-manifest` or `export metadata` |
+| `--dry-run` | Preview changes without writing files | `set`, `clear`, `cover set`, `cover clear`, `apply`; not supported by `export metadata` |
 | `--replace`, `-R` | Replace mode for `set`: clear every tag except those listed | `set` |
 
 > [!NOTE]
@@ -368,28 +364,38 @@ If none of these sources are satisfied, the write command exits with an error an
 
 ### Summary
 
+| Group | Commands |
+| --- | --- |
+| Inspect | `info`, `get`, `list-keys` |
+| Edit | `set`, `clear`, `cover get`, `cover set`, `cover clear` |
+| Batch | `apply`, `export metadata` |
+| Utility | `update` |
+
 | Command | Purpose | Read-only | Confirmation required |
 |---------|---------|-----------|-----------------------|
-| `list-keys` | List tag keys supported by tag-cli | Yes | No |
 | `info` | Show full metadata, audio properties, and embedded pictures | Yes | No |
 | `get` | Read specified tag values; outputs all tags when no keys are given | Yes | No |
+| `list-keys` | List tag keys supported by tag-cli | Yes | No |
 | `set` | Set one or more tag values; `--replace` clears tags not listed | No | Yes, for in-place edits |
 | `clear` | Clear specified tags or all tags and covers | No | Yes, for in-place edits |
 | `cover get` | Extract embedded cover to an image file | Yes | No |
 | `cover set` | Set embedded cover from an image file | No | Yes, for in-place edits |
 | `cover clear` | Remove embedded cover | No | Yes, for in-place edits |
 | `apply` | Apply a YAML manifest to one or more files | No | Yes |
-| `init-manifest` | Generate a manifest template | No | Always |
 | `export metadata` | Export an apply-ready YAML manifest for matching files | No (does not modify source audio files) | Only when overwriting output |
-| `completions` | Generate shell completion scripts | Yes | No |
-| `man` | Generate man page | Yes | No |
+| `update` | Update tag-cli to the latest release | No | No |
 
 ### `list-keys`
 
 ```bash
-$ tag-cli list-keys
-$ tag-cli list-keys --format json
-$ tag-cli list-keys --format yaml
+# List keys in table form
+tag-cli list-keys
+
+# List keys as JSON
+tag-cli list-keys --format json
+
+# List keys as YAML
+tag-cli list-keys --format yaml
 ```
 
 ### `info`
@@ -397,9 +403,14 @@ $ tag-cli list-keys --format yaml
 Displays full metadata, audio properties, and embedded picture information for a single audio file.
 
 ```bash
-$ tag-cli info -i song.mp3
-$ tag-cli info -i song.flac -f json
-$ tag-cli info -i song.m4a -f yaml
+# Show all metadata in table form
+tag-cli info -i song.mp3
+
+# Show metadata as JSON
+tag-cli info -i song.flac -f json
+
+# Show metadata as YAML
+tag-cli info -i song.m4a -f yaml
 ```
 
 JSON output structure:
@@ -432,9 +443,14 @@ JSON output structure:
 Reads one or more tag values. Outputs all tags when no keys are supplied.
 
 ```bash
-$ tag-cli get -i song.mp3 TITLE ARTIST ALBUM
-$ tag-cli get -i song.flac -f yaml
-$ tag-cli get -i song.mp3
+# Read selected tags
+tag-cli get -i song.mp3 TITLE ARTIST ALBUM
+
+# Read every tag as YAML
+tag-cli get -i song.flac -f yaml
+
+# Read every tag in table form
+tag-cli get -i song.mp3
 ```
 
 The JSON output uses tag names as keys and lists of strings as values:
@@ -450,7 +466,8 @@ The JSON output uses tag names as keys and lists of strings as values:
 Extract a single value with `jq`:
 
 ```bash
-$ tag-cli get -i song.mp3 TITLE -f json | jq -r '.TITLE[0]'
+# Extract one JSON value with jq
+tag-cli get -i song.mp3 TITLE -f json | jq -r '.TITLE[0]'
 My Song
 ```
 
@@ -462,16 +479,20 @@ Sets one or more tags. In-place modification requires confirmation. Use `-o` to 
 > `--replace` clears every tag except the ones you list and preserves embedded cover art. Preview with `--dry-run` before using it so you do not accidentally delete needed tags.
 
 ```bash
-# In-place write (requires confirmation)
-$ tag-cli set -i song.mp3 --dry-run TITLE="My Song"
-$ tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me" ALBUM="My Album"
+# Preview a tag edit before writing
+tag-cli set -i song.mp3 --dry-run TITLE="My Song"
 
-# Replace mode: keep only the listed tags
-$ tag-cli set -i song.mp3 --dry-run --replace TITLE="My Song" ARTIST="Me"
-$ tag-cli set -i song.mp3 -y --replace TITLE="My Song" ARTIST="Me"
+# Write tags in place after confirmation is explicit
+tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me" ALBUM="My Album"
 
-# Write to a new file (no confirmation needed)
-$ tag-cli set -i song.mp3 -o out.mp3 TITLE="My Song"
+# Preview replace mode: keep only the listed tags
+tag-cli set -i song.mp3 --dry-run --replace TITLE="My Song" ARTIST="Me"
+
+# Replace all tags after confirmation is explicit
+tag-cli set -i song.mp3 -y --replace TITLE="My Song" ARTIST="Me"
+
+# Write tags to a new output file
+tag-cli set -i song.mp3 -o out.mp3 TITLE="My Song"
 ```
 
 ### `clear`
@@ -479,10 +500,17 @@ $ tag-cli set -i song.mp3 -o out.mp3 TITLE="My Song"
 Clears specified tags. `--all` clears all supported tags and embedded covers.
 
 ```bash
-$ tag-cli clear -i song.mp3 --dry-run TITLE COMMENT
-$ tag-cli clear -i song.mp3 -y TITLE COMMENT
-$ tag-cli clear -i song.mp3 --dry-run --all
-$ tag-cli clear -i song.mp3 -y --all
+# Preview clearing selected tags
+tag-cli clear -i song.mp3 --dry-run TITLE COMMENT
+
+# Clear selected tags after confirmation is explicit
+tag-cli clear -i song.mp3 -y TITLE COMMENT
+
+# Preview clearing every supported tag and cover
+tag-cli clear -i song.mp3 --dry-run --all
+
+# Clear every supported tag and cover after confirmation is explicit
+tag-cli clear -i song.mp3 -y --all
 ```
 
 ### `cover get`
@@ -490,8 +518,11 @@ $ tag-cli clear -i song.mp3 -y --all
 Extracts embedded covers. Defaults to `Front Cover`; use `--picture-type` for another type.
 
 ```bash
-$ tag-cli cover get -i song.mp3 -o cover.jpg
-$ tag-cli cover get -i song.mp3 -o back.jpg --picture-type "Back Cover"
+# Extract the front cover
+tag-cli cover get -i song.mp3 -o cover.jpg
+
+# Extract a different picture type
+tag-cli cover get -i song.mp3 -o back.jpg --picture-type "Back Cover"
 ```
 
 > [!CAUTION]
@@ -504,9 +535,14 @@ $ tag-cli cover get -i song.mp3 -o back.jpg --picture-type "Back Cover"
 Sets the embedded cover from an image file.
 
 ```bash
-$ tag-cli cover set -i song.mp3 --dry-run cover.jpg
-$ tag-cli cover set -i song.mp3 -y cover.jpg
-$ tag-cli cover set -i song.mp3 -o out.mp3 --cover-format jpeg cover.png
+# Preview setting embedded cover art
+tag-cli cover set -i song.mp3 --dry-run cover.jpg
+
+# Set embedded cover art in place
+tag-cli cover set -i song.mp3 -y cover.jpg
+
+# Reprocess cover art while writing a new output file
+tag-cli cover set -i song.mp3 -o out.mp3 --cover-format jpeg cover.png
 ```
 
 ### `cover clear`
@@ -514,8 +550,11 @@ $ tag-cli cover set -i song.mp3 -o out.mp3 --cover-format jpeg cover.png
 Removes the embedded cover.
 
 ```bash
-$ tag-cli cover clear -i song.mp3 --dry-run
-$ tag-cli cover clear -i song.mp3 -y
+# Preview removing embedded cover art
+tag-cli cover clear -i song.mp3 --dry-run
+
+# Remove embedded cover art in place
+tag-cli cover clear -i song.mp3 -y
 ```
 
 ### `apply`
@@ -526,23 +565,15 @@ Applies a YAML manifest to batch-edit files. See [Declarative batch editing with
 > `apply` uses replace semantics: tags not listed in the manifest or `defaults` are cleared. Cover images are re-encoded every run, so file bytes may differ slightly between runs.
 
 ```bash
-$ tag-cli apply -m manifest.yaml --dry-run
-$ tag-cli apply -m manifest.yaml -y
-$ tag-cli apply -m manifest.yaml -y --fail-fast
+# Preview manifest changes before writing
+tag-cli apply -m manifest.yaml --dry-run
+
+# Apply manifest changes after confirmation is explicit
+tag-cli apply -m manifest.yaml -y
+
+# Stop on the first failed file
+tag-cli apply -m manifest.yaml -y --fail-fast
 ```
-
-### `init-manifest`
-
-Generates a minimal manifest template. `--template` selects a scenario template.
-
-```bash
-$ tag-cli init-manifest -y
-$ tag-cli init-manifest -y -o manifest.yaml
-$ tag-cli init-manifest -y --template classical -o manifest.yaml
-```
-
-> [!NOTE]
-> `init-manifest` has no `--dry-run` mode and always requires confirmation because it creates or overwrites the output file.
 
 ### `export metadata`
 
@@ -550,19 +581,19 @@ Exports metadata from audio files as an **apply-ready YAML manifest**. The outpu
 
 ```bash
 # Print manifest to stdout
-$ tag-cli export metadata -i '*.mp3'
+tag-cli export metadata -i '*.mp3'
 
 # Write aggregated manifest to a file
-$ tag-cli export metadata -i '*.mp3' -o album.yaml
+tag-cli export metadata -i '*.mp3' -o album.yaml
 
 # Write one sidecar file per input file
-$ tag-cli export metadata -i '*.mp3' -o sidecars/ --per-file
+tag-cli export metadata -i '*.mp3' -o sidecars/ --per-file
 
 # Also extract embedded front covers to external image files
-$ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover
+tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover
 
 # Place extracted covers in a custom directory
-$ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover --cover-dir ./artwork
+tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover --cover-dir ./artwork
 ```
 
 > [!NOTE]
@@ -601,26 +632,6 @@ files:
       ARTIST: Artist
     cover: album.covers/song.cover.png
     picture_type: Front Cover
-```
-
-### `completions`
-
-Generates shell completion scripts and writes them to stdout.
-
-```bash
-$ tag-cli completions bash > /etc/bash_completion.d/tag-cli
-$ tag-cli completions zsh > /usr/local/share/zsh/site-functions/_tag-cli
-$ tag-cli completions fish > ~/.config/fish/completions/tag-cli.fish
-```
-
-### `man`
-
-Generates the tag-cli man page and writes it to stdout.
-
-```bash
-$ tag-cli man > tag-cli.1
-$ sudo cp tag-cli.1 /usr/local/share/man/man1/
-$ mandb  # Debian/Ubuntu
 ```
 
 <a id="apply"></a>
@@ -735,24 +746,6 @@ If `Failures > 0`, `apply` returns a non-zero exit code.
 - `--fail-fast` stops on the first failure. It does not roll back files already processed.
 - `apply` writes each track as a full replacement, so applying the same manifest multiple times produces consistent metadata results and can be considered idempotent. However, cover images are re-encoded every time, so file bytes may differ slightly between runs.
 - If a file appears in both `files` and `paths`, it is processed multiple times. Avoid duplicate entries.
-
-<a id="init-manifest-templates"></a>
-## init-manifest templates
-
-`init-manifest --template <name>` generates scenario-oriented manifest templates pre-populated with relevant fields.
-
-| Template name | Description |
-|---------------|-------------|
-| `classical` | Classical music template, including composer / conductor / movement fields |
-| `podcast` | Podcast template, including podcast-related fields |
-| `radio` | Radio show template |
-| `education` | Educational content template |
-| `vinyl` | Vinyl release template |
-| `release` | General music release template |
-
-```bash
-$ tag-cli init-manifest -y --template release -o manifest.yaml
-```
 
 <a id="image-processing"></a>
 ## Image processing behavior

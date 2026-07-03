@@ -394,4 +394,11 @@ mod tests {
         assert!(expanded.contains(&a));
         assert!(expanded.contains(&c));
     }
+
+    #[test]
+    fn expand_patterns_invalid_glob_propagates_error() {
+        let tmp = TempDir::new().unwrap();
+        let err = expand_patterns(&[PathBuf::from("[")], tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("invalid glob"));
+    }
 }
