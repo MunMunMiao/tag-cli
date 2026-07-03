@@ -44,10 +44,11 @@ Common workflows:
   Apply a YAML manifest to many files:
     tag-cli apply -m manifest.yaml -y
 
-  Export metadata to stdout, a file, or sidecars:
+  Export metadata as an apply-ready YAML manifest:
     tag-cli export metadata -i \"**/*.mp3\"
-    tag-cli export metadata -i \"**/*.mp3\" -o report.yaml
+    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
     tag-cli export metadata -i \"**/*.mp3\" -o sidecars/ --per-file
+    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover
 
   Generate a manifest template:
     tag-cli init-manifest -y -o manifest.yaml
@@ -532,8 +533,49 @@ fn parse_key_value(s: &str) -> Result<(String, String), String> {
 #[derive(Subcommand, Debug)]
 pub enum ExportCommands {
     #[command(
-        about = "Export metadata from audio files",
-        long_about = "Export metadata and audio properties from audio files.\n\nOutput modes:\n  stdout (default)        Print a single aggregate report to stdout.\n  -o FILE                 Write a single aggregate report to FILE.\n  -o DIR  --per-file      Write one sidecar file per input into DIR.\n  -o FILE --aggregate     Force aggregate report even if -o looks like a directory.\n\nOrganization:\n  --flat                  Flat array of records (default).\n  --by-directory          Group records by parent directory.\n  --by-album              Group records by ALBUM tag.\n\nField filtering:\n  --fields FIELDS         Comma-separated allowlist (e.g. TITLE,ARTIST,ALBUM).\n  --exclude-fields FIELDS Comma-separated blocklist.\n\nPath style:\n  --relative-paths        Use paths relative to the current directory (default).\n  --absolute-paths        Use absolute paths.\n\nUnsupported or corrupt files are skipped and marked with `corrupt_file: true`.\n\nExamples:\n  Export a single file to stdout as YAML:\n    tag-cli export metadata -i song.mp3\n\n  Export all FLAC files recursively to a JSON aggregate report:\n    tag-cli export metadata -i \"**/*.flac\" -o report.json --format json\n\n  Export a directory tree to per-file sidecars:\n    tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file\n\n  Export only a few fields, grouped by album:\n    tag-cli export metadata -i \"**/*.mp3\" --fields TITLE,ARTIST,ALBUM --by-album\n\n  Exclude technical fields and write absolute paths:\n    tag-cli export metadata -i \"**/*.ogg\" --exclude-fields bitrate,sample_rate --absolute-paths\n\n  Stop on the first unreadable file:\n    tag-cli export metadata -i \"**/*.wav\" --fail-fast"
+        about = "Export metadata as an apply-ready YAML manifest",
+        long_about = "Export metadata from audio files as a YAML manifest that can be edited and applied back with `tag-cli apply`. Only YAML is supported.
+
+Output modes:
+  stdout (default)        Print the manifest to stdout.
+  -o FILE                 Write the manifest to FILE.
+  -o DIR  --per-file      Write one sidecar manifest per input into DIR.
+  -o FILE --aggregate     Force aggregate manifest even if -o looks like a directory.
+
+Cover extraction:
+  --with-cover            Extract the front cover of each file to an external image file.
+  --cover-dir DIR         Write cover images to DIR instead of the default location.
+                          Only valid with --with-cover.
+
+Field filtering:
+  --fields FIELDS         Comma-separated allowlist (e.g. TITLE,ARTIST,ALBUM).
+  --exclude-fields FIELDS Comma-separated blocklist.
+
+Path style:
+  --relative-paths        Use paths relative to the current directory (default).
+  --absolute-paths        Use absolute paths.
+
+Multi-value tags are reduced to a single value (the first one) when written to the manifest.
+Unsupported or corrupt files are skipped and reported at the end.
+
+Examples:
+  Export a single file to stdout:
+    tag-cli export metadata -i song.mp3
+
+  Export all FLAC files to a manifest:
+    tag-cli export metadata -i \"**/*.flac\" -o manifest.yaml
+
+  Export a directory tree to per-file sidecars:
+    tag-cli export metadata -i \"music/**/*.mp3\" -o sidecars/ --per-file
+
+  Export with front cover images:
+    tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml --with-cover
+
+  Export only a few fields:
+    tag-cli export metadata -i \"**/*.mp3\" --fields TITLE,ARTIST,ALBUM
+
+  Stop on the first unreadable file:
+    tag-cli export metadata -i \"**/*.wav\" --fail-fast"
     )]
     Metadata(ExportMetadataArgs),
 }
@@ -555,12 +597,9 @@ pub struct ExportMetadataArgs {
     #[arg(
         short = 'o',
         long,
-        help = "Output path: file writes an aggregate report, directory writes per-file sidecars; stdout if omitted"
+        help = "Output path: file writes an aggregate manifest, directory writes per-file sidecars; stdout if omitted"
     )]
     pub output: Option<PathBuf>,
-
-    #[arg(short, long, value_enum, help = "Output format (json, yaml, table)")]
-    pub format: Option<OutputFormat>,
 
     #[arg(
         long,
@@ -570,26 +609,23 @@ pub struct ExportMetadataArgs {
 
     #[arg(
         long,
-        help = "Force aggregate report output even when -o is a directory path"
+        help = "Force aggregate manifest output even when -o is a directory path"
     )]
     pub aggregate: bool,
 
     #[arg(
         long,
-        group = "organization",
-        help = "Output a flat record array (default organization)"
+        help = "Extract the front cover of each file to an external image file"
     )]
-    pub flat: bool,
+    pub with_cover: bool,
 
     #[arg(
         long,
-        group = "organization",
-        help = "Group records by their parent directory"
+        value_name = "DIR",
+        requires = "with_cover",
+        help = "Directory for extracted cover images (requires --with-cover)"
     )]
-    pub by_directory: bool,
-
-    #[arg(long, group = "organization", help = "Group records by the ALBUM tag")]
-    pub by_album: bool,
+    pub cover_dir: Option<PathBuf>,
 
     #[arg(
         long,

@@ -1220,6 +1220,7 @@ dependencies = [
  "clap_mangen",
  "hex",
  "image",
+ "mime_guess",
  "pathdiff",
  "predicates",
  "self-replace",

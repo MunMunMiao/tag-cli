@@ -2,18 +2,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::cli::ExportMetadataArgs;
-use tag_core::config::expand_patterns;
+use tag_core::config::{FileEntry, Manifest, expand_patterns};
 use tag_core::error::TagCliError;
-use tag_core::output::{ExportOutput, ExportRecord, ExportSummary, FailureRecord};
-use tag_core::taglib::{TagError, read_metadata_from_path_lenient};
-
-fn export_to_yaml(output: &ExportOutput) -> Result<String, TagCliError> {
-    serde_yaml::to_string(output).map_err(|e| {
-        TagCliError::Io(std::io::Error::other(format!(
-            "YAML serialization failed: {e}"
-        )))
-    })
-}
+use tag_core::output::ExportRecord;
+use tag_core::taglib::{Picture, TagError, read_metadata_from_path_lenient};
 
 enum OutputMode {
     Stdout,
@@ -50,7 +42,7 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
                 skipped += 1;
             }
             Err((category, message)) => {
-                failures.push(FailureRecord {
+                failures.push(tag_core::output::FailureRecord {
                     file_path: path_to_string(path, &base_dir, args.absolute_paths),
                     read_status: "failed".to_string(),
                     error_category: category,
@@ -69,36 +61,29 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
         args.exclude_fields.as_deref(),
     );
 
-    let output = ExportOutput {
-        export_timestamp: chrono::Utc::now().to_rfc3339(),
-        generator: "tag-cli export metadata".to_string(),
-        summary: ExportSummary {
-            total: files.len(),
-            succeeded,
-            skipped,
-            failed: failures.len(),
-        },
-        records,
-        failures,
-    };
-
-    write_output(
-        &output,
-        &mode,
+    let (manifest, _covers_written) = build_manifest(
+        &records,
         args.with_cover,
         args.cover_dir.as_deref(),
+        &mode,
+        &base_dir,
+    )?;
+
+    write_manifest(
+        &manifest,
+        &mode,
         crate::cli::Cli::is_confirmed(args.yes),
     )?;
 
     crate::report::status(format!(
         "Success: {}, Skipped: {}, Failures: {}",
-        output.summary.succeeded, output.summary.skipped, output.summary.failed
+        succeeded, skipped, failures.len()
     ));
 
-    if output.summary.failed > 0 {
+    if !failures.is_empty() {
         Err(TagCliError::ApplyFailed(format!(
             "{} file(s) failed to export",
-            output.summary.failed
+            failures.len()
         )))
     } else {
         Ok(())
@@ -321,61 +306,172 @@ fn apply_field_filter(
     }
 }
 
-fn write_output(
-    output: &ExportOutput,
+fn build_manifest(
+    records: &[ExportRecord],
+    with_cover: bool,
+    cover_dir: Option<&Path>,
     mode: &OutputMode,
-    _with_cover: bool,
-    _cover_dir: Option<&Path>,
+    base_dir: &Path,
+) -> Result<(Manifest, Vec<PathBuf>), TagCliError> {
+    let manifest_dir = manifest_directory(mode, base_dir);
+    let cover_root = cover_root_dir(cover_dir, mode, base_dir);
+
+    let mut files = Vec::new();
+    let mut covers_written = Vec::new();
+
+    for record in records {
+        let file_path = Path::new(&record.file_path);
+        let stem = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&record.file_name);
+
+        let (cover, picture_type) = if with_cover {
+            if let Some(picture) = record.front_cover.as_ref() {
+                let cover_path = write_cover(picture, &cover_root, stem)?;
+                covers_written.push(cover_path.clone());
+                let relative = pathdiff::diff_paths(&cover_path, &manifest_dir)
+                    .unwrap_or(cover_path);
+                (Some(relative), Some("Front Cover".to_string()))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        files.push(FileEntry {
+            path: PathBuf::from(&record.file_path),
+            tags: record
+                .properties
+                .iter()
+                .filter_map(|(k, v)| v.first().map(|first| (k.clone(), first.clone())))
+                .collect(),
+            cover,
+            picture_type,
+        });
+    }
+
+    Ok((Manifest { files, ..Manifest::default() }, covers_written))
+}
+
+fn write_cover(picture: &Picture, cover_root: &Path, stem: &str) -> Result<PathBuf, TagCliError> {
+    let ext = extension_for_picture(picture);
+    let cover_path = unique_cover_path(cover_root, stem, ext);
+    std::fs::create_dir_all(cover_root).map_err(TagCliError::Io)?;
+    std::fs::write(&cover_path, &picture.data).map_err(TagCliError::Io)?;
+    Ok(cover_path)
+}
+
+fn extension_for_picture(picture: &Picture) -> &'static str {
+    if let Some(mime) = &picture.mime_type {
+        match mime.as_str() {
+            "image/jpeg" | "image/jpg" => return "jpg",
+            "image/png" => return "png",
+            "image/gif" => return "gif",
+            "image/bmp" => return "bmp",
+            "image/webp" => return "webp",
+            "image/tiff" => return "tiff",
+            _ => {}
+        }
+        if let Some(exts) = mime_guess::get_mime_extensions_str(mime)
+            && let Some(ext) = exts.first().copied()
+        {
+            return ext;
+        }
+    }
+    "bin"
+}
+
+fn unique_cover_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let base = dir.join(format!("{stem}.cover.{ext}"));
+    if !base.exists() {
+        return base;
+    }
+    let mut n = 1;
+    loop {
+        let candidate = dir.join(format!("{stem}.cover.{n}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+fn cover_root_dir(cover_dir: Option<&Path>, mode: &OutputMode, base_dir: &Path) -> PathBuf {
+    if let Some(dir) = cover_dir {
+        return dir.to_path_buf();
+    }
+    match mode {
+        OutputMode::AggregateFile(path) => {
+            let parent = path.parent().unwrap_or(base_dir);
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("report");
+            parent.join(format!("{stem}.covers"))
+        }
+        OutputMode::SidecarDirectory(dir) => dir.clone(),
+        OutputMode::Stdout => base_dir.join("covers"),
+    }
+}
+
+fn manifest_directory(mode: &OutputMode, base_dir: &Path) -> PathBuf {
+    match mode {
+        OutputMode::AggregateFile(path) => path.parent().unwrap_or(base_dir).to_path_buf(),
+        OutputMode::SidecarDirectory(dir) => dir.clone(),
+        OutputMode::Stdout => base_dir.to_path_buf(),
+    }
+}
+
+fn write_manifest(
+    manifest: &Manifest,
+    mode: &OutputMode,
     confirmed: bool,
 ) -> Result<(), TagCliError> {
-    let content = export_to_yaml(output)?;
+    let yaml = serde_yaml::to_string(manifest).map_err(|e| {
+        TagCliError::Io(std::io::Error::other(format!("YAML serialization failed: {e}")))
+    })?;
 
     match mode {
         OutputMode::Stdout => {
-            println!("{}", content);
+            println!("{yaml}");
             Ok(())
         }
         OutputMode::AggregateFile(path) => {
             check_overwrite(path, confirmed)?;
-            std::fs::write(path, content).map_err(TagCliError::Io)?;
+            std::fs::write(path, yaml).map_err(TagCliError::Io)?;
             crate::report::status(format!("Wrote {}", path.display()));
             Ok(())
         }
         OutputMode::SidecarDirectory(dir) => {
-            // Sidecar names are derived from the input file stem only, so files
-            // with the same name from different source directories collide in the
-            // flat output directory. Without -y the first existing file stops the
-            // batch; with -y later files silently overwrite earlier ones.
-            for record in &output.records {
-                let stem = Path::new(&record.file_name)
+            for entry in &manifest.files {
+                let file_name = entry
+                    .path
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .unwrap_or(&record.file_name);
-                let out_path = dir.join(format!("{}.metadata.yaml", stem));
+                    .unwrap_or("file");
+                let out_path = dir.join(format!("{file_name}.metadata.yaml"));
                 if out_path.exists() && !confirmed {
                     return Err(TagCliError::Io(std::io::Error::other(format!(
                         "output file already exists: {}. Use -y to overwrite.",
                         out_path.display()
                     ))));
                 }
-
-                let single = ExportOutput {
-                    export_timestamp: output.export_timestamp.clone(),
-                    generator: output.generator.clone(),
-                    summary: ExportSummary {
-                        total: 1,
-                        succeeded: 1,
-                        skipped: 0,
-                        failed: 0,
-                    },
-                    records: vec![record.clone()],
-                    failures: vec![],
+                let single = Manifest {
+                    files: vec![entry.clone()],
+                    ..Manifest::default()
                 };
-                std::fs::write(&out_path, export_to_yaml(&single)?).map_err(TagCliError::Io)?;
+                let content = serde_yaml::to_string(&single).map_err(|e| {
+                    TagCliError::Io(std::io::Error::other(format!(
+                        "YAML serialization failed: {e}"
+                    )))
+                })?;
+                std::fs::write(&out_path, content).map_err(TagCliError::Io)?;
             }
             crate::report::status(format!(
                 "Wrote {} sidecar files to {}",
-                output.records.len(),
+                manifest.files.len(),
                 dir.display()
             ));
             Ok(())
@@ -398,7 +494,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use tag_core::output::PicturesSummary;
-    use tag_core::taglib::AudioProperties;
+    use tag_core::taglib::{AudioProperties, Picture};
 
     fn sample_record() -> ExportRecord {
         ExportRecord {
@@ -434,6 +530,18 @@ mod tests {
         }
     }
 
+    fn sample_record_with_cover() -> ExportRecord {
+        let mut record = sample_record();
+        record.front_cover = Some(Picture {
+            mime_type: Some("image/png".to_string()),
+            description: Some("cover".to_string()),
+            picture_type: Some("Front Cover".to_string()),
+            data: vec![0u8; 64],
+        });
+        record.pictures.front_cover_present = true;
+        record
+    }
+
     #[test]
     fn resolve_output_mode_stdout_when_no_output() {
         let args = ExportMetadataArgs {
@@ -458,7 +566,7 @@ mod tests {
     fn resolve_output_mode_aggregate_for_file_path() {
         let args = ExportMetadataArgs {
             input: vec![],
-            output: Some(PathBuf::from("report.json")),
+            output: Some(PathBuf::from("report.yaml")),
             per_file: false,
             aggregate: false,
             with_cover: false,
@@ -472,7 +580,7 @@ mod tests {
         };
         let mode = resolve_output_mode(&args).unwrap();
         assert!(
-            matches!(mode, OutputMode::AggregateFile(p) if p.as_path() == Path::new("report.json"))
+            matches!(mode, OutputMode::AggregateFile(p) if p.as_path() == Path::new("report.yaml"))
         );
     }
 
@@ -555,7 +663,8 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(&mut records, None, Some("tags"));
+        apply_field_filter(
+            &mut records, None, Some("tags"));
         assert!(records[0].tags.is_empty());
         assert!(records[0].audio.is_some());
         assert_eq!(records[0].pictures.count, 1);
@@ -564,7 +673,8 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_audio_and_pictures() {
         let mut records = vec![sample_record()];
-        apply_field_filter(&mut records, None, Some("audio,pictures"));
+        apply_field_filter(
+            &mut records, None, Some("audio,pictures"));
         assert!(records[0].audio.is_none());
         assert_eq!(records[0].pictures.count, 0);
         assert!(!records[0].tags.is_empty());
@@ -573,7 +683,8 @@ mod tests {
     #[test]
     fn apply_field_filter_include_only_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(&mut records, Some("tags"), None);
+        apply_field_filter(
+            &mut records, Some("tags"), None);
         assert!(!records[0].tags.is_empty());
         assert!(records[0].properties.is_empty());
         assert!(records[0].audio.is_none());
@@ -583,7 +694,8 @@ mod tests {
     #[test]
     fn apply_field_filter_include_tags_title_keeps_tags() {
         let mut records = vec![sample_record()];
-        apply_field_filter(&mut records, Some("tags.title"), None);
+        apply_field_filter(
+            &mut records, Some("tags.title"), None);
         assert!(!records[0].tags.is_empty());
     }
 
@@ -607,105 +719,106 @@ mod tests {
     #[test]
     fn apply_field_filter_exclude_specific_tag_key() {
         let mut records = vec![sample_record()];
-        apply_field_filter(&mut records, None, Some("tags.artist"));
+        apply_field_filter(
+            &mut records, None, Some("tags.artist"));
         assert!(records[0].tags.contains_key("title"));
         assert!(!records[0].tags.contains_key("artist"));
         assert!(records[0].audio.is_some());
     }
 
     #[test]
-    fn write_output_aggregate_file_requires_confirmation() {
+    fn build_manifest_omits_cover_without_flag() {
+        let record = sample_record_with_cover();
+        let mode = OutputMode::AggregateFile(PathBuf::from("manifest.yaml"));
+        let base_dir = PathBuf::from("/tmp");
+        let (manifest, covers) = build_manifest(&[record], false, None, &mode, &base_dir).unwrap();
+        assert_eq!(manifest.files.len(), 1);
+        assert!(manifest.files[0].cover.is_none());
+        assert!(manifest.files[0].picture_type.is_none());
+        assert!(covers.is_empty());
+    }
+
+    #[test]
+    fn build_manifest_includes_cover_with_flag() {
+        let record = sample_record_with_cover();
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("existing.json");
+        let mode = OutputMode::AggregateFile(tmp.path().join("manifest.yaml"));
+        let base_dir = tmp.path().to_path_buf();
+        let (manifest, covers) = build_manifest(&[record], true, None, &mode, &base_dir).unwrap();
+        assert_eq!(manifest.files.len(), 1);
+        assert!(manifest.files[0].cover.is_some());
+        assert_eq!(manifest.files[0].picture_type, Some("Front Cover".to_string()));
+        assert_eq!(covers.len(), 1);
+        assert!(covers[0].exists());
+    }
+
+    #[test]
+    fn write_manifest_aggregate_file_requires_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("existing.yaml");
         std::fs::write(&path, "{}").unwrap();
 
-        let output = ExportOutput {
-            export_timestamp: "2026-07-02T10:00:00Z".to_string(),
-            generator: "tag-cli export metadata".to_string(),
-            summary: ExportSummary {
-                total: 0,
-                succeeded: 0,
-                skipped: 0,
-                failed: 0,
-            },
-            records: vec![],
-            failures: vec![],
-        };
-
-        let result = write_output(
-            &output,
-            &OutputMode::AggregateFile(path),
-            false,
-            None,
-            false,
-        );
+        let manifest = Manifest::default();
+        let mode = OutputMode::AggregateFile(path);
+        let result = write_manifest(&manifest, &mode, false);
         assert!(result.is_err());
     }
 
     #[test]
-    fn write_output_aggregate_file_with_confirmation() {
+    fn write_manifest_aggregate_file_with_confirmation() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("report.json");
+        let path = tmp.path().join("manifest.yaml");
 
-        let output = ExportOutput {
-            export_timestamp: "2026-07-02T10:00:00Z".to_string(),
-            generator: "tag-cli export metadata".to_string(),
-            summary: ExportSummary {
-                total: 1,
-                succeeded: 1,
-                skipped: 0,
-                failed: 0,
-            },
-            records: vec![sample_record()],
-            failures: vec![],
+        let mut tags = BTreeMap::new();
+        tags.insert("TITLE".to_string(), "Song".to_string());
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: PathBuf::from("./song.mp3"),
+                tags,
+                cover: None,
+                picture_type: None,
+            }],
+            ..Manifest::default()
         };
 
-        write_output(
-            &output,
+        write_manifest(
+            &manifest,
             &OutputMode::AggregateFile(path.clone()),
-            false,
-            None,
             true,
         )
         .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("total: 1"));
-        assert!(content.contains("title: Song"));
+        assert!(content.contains("files:"));
+        assert!(content.contains("path: ./song.mp3"));
+        assert!(content.contains("TITLE: Song"));
     }
 
     #[test]
-    fn write_output_sidecar_files() {
+    fn write_manifest_sidecar_files() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("sidecars");
         std::fs::create_dir(&dir).unwrap();
 
-        let output = ExportOutput {
-            export_timestamp: "2026-07-02T10:00:00Z".to_string(),
-            generator: "tag-cli export metadata".to_string(),
-            summary: ExportSummary {
-                total: 1,
-                succeeded: 1,
-                skipped: 0,
-                failed: 0,
-            },
-            records: vec![sample_record()],
-            failures: vec![],
+        let mut tags = BTreeMap::new();
+        tags.insert("TITLE".to_string(), "Song".to_string());
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: PathBuf::from("./song.mp3"),
+                tags,
+                cover: None,
+                picture_type: None,
+            }],
+            ..Manifest::default()
         };
 
-        write_output(
-            &output,
-            &OutputMode::SidecarDirectory(dir.clone()),
-            false,
-            None,
-            true,
-        )
-        .unwrap();
+        write_manifest(&manifest, &OutputMode::SidecarDirectory(dir.clone()), true).unwrap();
 
         let sidecar = dir.join("song.metadata.yaml");
         assert!(sidecar.exists());
         let content = std::fs::read_to_string(&sidecar).unwrap();
-        assert!(content.contains("title: Song"));
+        assert!(content.contains("files:"));
+        assert!(content.contains("TITLE: Song"));
     }
 
     #[test]
@@ -734,7 +847,7 @@ mod tests {
             let path = PathBuf::from(format!("song.{ext}"));
             assert!(
                 !is_known_audio_format(&path),
-                "expected {ext} to be an unknown format"
+                "expected {ext} to be an unknown audio format"
             );
         }
     }
