@@ -251,7 +251,6 @@ fn build_info_output<'a>(metadata: &'a Metadata, file: &'a str) -> InfoOutput<'a
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +463,4 @@ mod tests {
         assert_eq!(record.read_status, "ok");
         assert!(record.error_message.is_none());
     }
-
 }

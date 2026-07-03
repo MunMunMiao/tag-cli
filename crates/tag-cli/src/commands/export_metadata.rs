@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 use crate::cli::ExportMetadataArgs;
 use tag_core::config::expand_patterns;
 use tag_core::error::TagCliError;
-use tag_core::output::{
-    ExportOrganization, ExportOutput, ExportRecord, ExportSummary, FailureRecord,
-    OutputFormat as CoreOutputFormat, format_export,
-};
+use tag_core::output::{ExportOutput, ExportRecord, ExportSummary, FailureRecord};
 use tag_core::taglib::{TagError, read_metadata_from_path_lenient};
+
+fn export_to_yaml(output: &ExportOutput) -> Result<String, TagCliError> {
+    serde_yaml::to_string(output).map_err(|e| {
+        TagCliError::Io(std::io::Error::other(format!(
+            "YAML serialization failed: {e}"
+        )))
+    })
+}
 
 enum OutputMode {
     Stdout,
@@ -25,8 +30,6 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
     }
 
     let mode = resolve_output_mode(args)?;
-    let organization = resolve_organization(args);
-    let format = resolve_format(args, &mode);
 
     let mut records = Vec::new();
     let mut failures = Vec::new();
@@ -81,9 +84,9 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
 
     write_output(
         &output,
-        format,
-        organization,
         &mode,
+        args.with_cover,
+        args.cover_dir.as_deref(),
         crate::cli::Cli::is_confirmed(args.yes),
     )?;
 
@@ -134,35 +137,6 @@ fn ensure_directory(path: &Path, description: &str) -> Result<(), TagCliError> {
         ))));
     }
     Ok(())
-}
-
-fn resolve_organization(args: &ExportMetadataArgs) -> ExportOrganization {
-    if args.by_directory {
-        ExportOrganization::ByDirectory
-    } else if args.by_album {
-        ExportOrganization::ByAlbum
-    } else {
-        ExportOrganization::Flat
-    }
-}
-
-fn resolve_format(args: &ExportMetadataArgs, mode: &OutputMode) -> CoreOutputFormat {
-    if let Some(f) = args.format {
-        return match f {
-            crate::cli::OutputFormat::Json => CoreOutputFormat::Json,
-            crate::cli::OutputFormat::Yaml => CoreOutputFormat::Yaml,
-            crate::cli::OutputFormat::Table => CoreOutputFormat::Table,
-        };
-    }
-
-    match mode {
-        OutputMode::AggregateFile(path) => match path.extension().and_then(|e| e.to_str()) {
-            Some("json") => CoreOutputFormat::Json,
-            Some("yaml") | Some("yml") => CoreOutputFormat::Yaml,
-            _ => CoreOutputFormat::Json,
-        },
-        _ => CoreOutputFormat::Json,
-    }
 }
 
 /// Heuristic list of audio file extensions that TagLib claims to support.
@@ -349,19 +323,20 @@ fn apply_field_filter(
 
 fn write_output(
     output: &ExportOutput,
-    format: CoreOutputFormat,
-    organization: ExportOrganization,
     mode: &OutputMode,
+    _with_cover: bool,
+    _cover_dir: Option<&Path>,
     confirmed: bool,
 ) -> Result<(), TagCliError> {
+    let content = export_to_yaml(output)?;
+
     match mode {
         OutputMode::Stdout => {
-            println!("{}", format_export(output, format, organization)?);
+            println!("{}", content);
             Ok(())
         }
         OutputMode::AggregateFile(path) => {
             check_overwrite(path, confirmed)?;
-            let content = format_export(output, format, organization)?;
             std::fs::write(path, content).map_err(TagCliError::Io)?;
             crate::report::status(format!("Wrote {}", path.display()));
             Ok(())
@@ -376,12 +351,7 @@ fn write_output(
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or(&record.file_name);
-                let ext = match format {
-                    CoreOutputFormat::Json => "json",
-                    CoreOutputFormat::Yaml => "yaml",
-                    CoreOutputFormat::Table => "txt",
-                };
-                let out_path = dir.join(format!("{}.metadata.{}", stem, ext));
+                let out_path = dir.join(format!("{}.metadata.yaml", stem));
                 if out_path.exists() && !confirmed {
                     return Err(TagCliError::Io(std::io::Error::other(format!(
                         "output file already exists: {}. Use -y to overwrite.",
@@ -401,8 +371,7 @@ fn write_output(
                     records: vec![record.clone()],
                     failures: vec![],
                 };
-                let content = format_export(&single, format, ExportOrganization::Flat)?;
-                std::fs::write(&out_path, content).map_err(TagCliError::Io)?;
+                std::fs::write(&out_path, export_to_yaml(&single)?).map_err(TagCliError::Io)?;
             }
             crate::report::status(format!(
                 "Wrote {} sidecar files to {}",
@@ -459,6 +428,7 @@ mod tests {
                 front_cover_present: true,
                 summaries: vec![],
             },
+            front_cover: None,
             read_status: "ok".to_string(),
             error_message: None,
         }
@@ -469,12 +439,10 @@ mod tests {
         let args = ExportMetadataArgs {
             input: vec![],
             output: None,
-            format: None,
             per_file: false,
             aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
+            with_cover: false,
+            cover_dir: None,
             fields: None,
             exclude_fields: None,
             absolute_paths: false,
@@ -491,12 +459,10 @@ mod tests {
         let args = ExportMetadataArgs {
             input: vec![],
             output: Some(PathBuf::from("report.json")),
-            format: None,
             per_file: false,
             aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
+            with_cover: false,
+            cover_dir: None,
             fields: None,
             exclude_fields: None,
             absolute_paths: false,
@@ -516,12 +482,10 @@ mod tests {
         let args = ExportMetadataArgs {
             input: vec![],
             output: Some(tmp.path().to_path_buf()),
-            format: None,
             per_file: false,
             aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
+            with_cover: false,
+            cover_dir: None,
             fields: None,
             exclude_fields: None,
             absolute_paths: false,
@@ -540,12 +504,10 @@ mod tests {
         let args = ExportMetadataArgs {
             input: vec![],
             output: Some(out_dir.clone()),
-            format: None,
             per_file: true,
             aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
+            with_cover: false,
+            cover_dir: None,
             fields: None,
             exclude_fields: None,
             absolute_paths: false,
@@ -556,74 +518,6 @@ mod tests {
         let mode = resolve_output_mode(&args).unwrap();
         assert!(matches!(mode, OutputMode::SidecarDirectory(p) if p == out_dir));
         assert!(out_dir.exists());
-    }
-
-    #[test]
-    fn resolve_format_defaults_to_json() {
-        let args = ExportMetadataArgs {
-            input: vec![],
-            output: None,
-            format: None,
-            per_file: false,
-            aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
-            fields: None,
-            exclude_fields: None,
-            absolute_paths: false,
-            relative_paths: false,
-            fail_fast: false,
-            yes: false,
-        };
-        assert_eq!(
-            resolve_format(&args, &OutputMode::Stdout),
-            CoreOutputFormat::Json
-        );
-    }
-
-    #[test]
-    fn resolve_format_from_aggregate_file_extension() {
-        let args = ExportMetadataArgs {
-            input: vec![],
-            output: Some(PathBuf::from("report.yaml")),
-            format: None,
-            per_file: false,
-            aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
-            fields: None,
-            exclude_fields: None,
-            absolute_paths: false,
-            relative_paths: false,
-            fail_fast: false,
-            yes: false,
-        };
-        let mode = resolve_output_mode(&args).unwrap();
-        assert_eq!(resolve_format(&args, &mode), CoreOutputFormat::Yaml);
-    }
-
-    #[test]
-    fn resolve_format_explicit_overrides_extension() {
-        let args = ExportMetadataArgs {
-            input: vec![],
-            output: Some(PathBuf::from("report.yaml")),
-            format: Some(crate::cli::OutputFormat::Json),
-            per_file: false,
-            aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
-            fields: None,
-            exclude_fields: None,
-            absolute_paths: false,
-            relative_paths: false,
-            fail_fast: false,
-            yes: false,
-        };
-        let mode = resolve_output_mode(&args).unwrap();
-        assert_eq!(resolve_format(&args, &mode), CoreOutputFormat::Json);
     }
 
     #[test]
@@ -740,9 +634,9 @@ mod tests {
 
         let result = write_output(
             &output,
-            CoreOutputFormat::Json,
-            ExportOrganization::Flat,
             &OutputMode::AggregateFile(path),
+            false,
+            None,
             false,
         );
         assert!(result.is_err());
@@ -768,16 +662,16 @@ mod tests {
 
         write_output(
             &output,
-            CoreOutputFormat::Json,
-            ExportOrganization::Flat,
             &OutputMode::AggregateFile(path.clone()),
+            false,
+            None,
             true,
         )
         .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("\"total\": 1"));
-        assert!(content.contains("\"title\": \"Song\""));
+        assert!(content.contains("total: 1"));
+        assert!(content.contains("title: Song"));
     }
 
     #[test]
@@ -801,17 +695,17 @@ mod tests {
 
         write_output(
             &output,
-            CoreOutputFormat::Json,
-            ExportOrganization::Flat,
             &OutputMode::SidecarDirectory(dir.clone()),
+            false,
+            None,
             true,
         )
         .unwrap();
 
-        let sidecar = dir.join("song.metadata.json");
+        let sidecar = dir.join("song.metadata.yaml");
         assert!(sidecar.exists());
         let content = std::fs::read_to_string(&sidecar).unwrap();
-        assert!(content.contains("\"title\": \"Song\""));
+        assert!(content.contains("title: Song"));
     }
 
     #[test]
@@ -850,12 +744,10 @@ mod tests {
         let args = ExportMetadataArgs {
             input: vec![PathBuf::from("*.definitely_missing")],
             output: None,
-            format: None,
             per_file: false,
             aggregate: false,
-            flat: false,
-            by_directory: false,
-            by_album: false,
+            with_cover: false,
+            cover_dir: None,
             fields: None,
             exclude_fields: None,
             absolute_paths: false,
