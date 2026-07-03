@@ -125,7 +125,7 @@ $ tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me"
 - Read and write metadata tags and embedded cover art for common audio formats.
 - Declarative batch editing for albums or libraries via YAML manifest.
 - Automatic cover processing: scaling, format selection, EXIF/metadata stripping, and size limits.
-- Output formats: human-readable tables, JSON, and YAML.
+- Output formats: human-readable tables, JSON, and YAML for `info`, `get`, and `list-keys`; `export metadata` emits an apply-ready YAML manifest.
 - `--dry-run` preview for all write operations that support it.
 - Scenario-oriented manifest templates via `init-manifest --template`.
 - Environment-variable confirmation for scripting and CI (`TAG_CLI_YES=1` or `CI=true`).
@@ -355,13 +355,13 @@ If none of these sources are satisfied, the write command exits with an error an
 | `-v`, `--verbose` | Output DEBUG-level logs | All commands |
 | `-i <path>` | Input audio file path or glob pattern | `info`, `get`, `set`, `clear`, `cover`, `export metadata` |
 | `-o <path>` | Output path: a file for most commands, a directory for sidecar exports, or an image file for cover get | `set`, `clear`, `cover get`, `cover set`, `cover clear`, `init-manifest`, `export metadata` |
-| `-f <format>` | Output format, or compatibility alias for the manifest path in `apply` | `info`, `get`, `list-keys`, `export metadata`, `apply` (alias for `-m`) |
+| `-f <format>` | Output format, or compatibility alias for the manifest path in `apply` | `info`, `get`, `list-keys`, `apply` (alias for `-m`) |
 | `-y`, `--yes` | Skip confirmation prompt | Write commands |
 | `--dry-run` | Preview changes without writing files | `set`, `clear`, `cover set`, `cover clear`, `apply`; not supported by `init-manifest` or `export metadata` |
 | `--replace`, `-R` | Replace mode for `set`: clear every tag except those listed | `set` |
 
 > [!NOTE]
-> The exact meaning of `-f` depends on the command. In `info`/`get`/`list-keys`/`export metadata` it selects the output format (`table`, `json`, or `yaml`). In `apply` it is a backward-compatible alias for `-m`/`--manifest`.
+> The exact meaning of `-f` depends on the command. In `info`/`get`/`list-keys` it selects the output format (`table`, `json`, or `yaml`). In `apply` it is a backward-compatible alias for `-m`/`--manifest`. `export metadata` is YAML-only and does not accept `-f`.
 
 <a id="command-reference"></a>
 ## Command reference
@@ -380,7 +380,7 @@ If none of these sources are satisfied, the write command exits with an error an
 | `cover clear` | Remove embedded cover | No | Yes, for in-place edits |
 | `apply` | Apply a YAML manifest to one or more files | No | Yes |
 | `init-manifest` | Generate a manifest template | No | Always |
-| `export metadata` | Export metadata and audio properties for matching files | No (does not modify source audio files) | Only when overwriting output |
+| `export metadata` | Export an apply-ready YAML manifest for matching files | No (does not modify source audio files) | Only when overwriting output |
 | `completions` | Generate shell completion scripts | Yes | No |
 | `man` | Generate man page | Yes | No |
 
@@ -546,83 +546,62 @@ $ tag-cli init-manifest -y --template classical -o manifest.yaml
 
 ### `export metadata`
 
-Exports metadata and audio properties of files matching a glob pattern. Unsupported files are skipped. Output can go to stdout, a single aggregated file, or per-file sidecars.
+Exports metadata from audio files as an **apply-ready YAML manifest**. The output uses the same schema as `apply -m`, so you can export, edit, and re-apply in one loop.
 
 ```bash
+# Print manifest to stdout
 $ tag-cli export metadata -i '*.mp3'
-$ tag-cli export metadata -i '*.mp3' -o report.json
+
+# Write aggregated manifest to a file
+$ tag-cli export metadata -i '*.mp3' -o album.yaml
+
+# Write one sidecar file per input file
 $ tag-cli export metadata -i '*.mp3' -o sidecars/ --per-file
-$ tag-cli export metadata -i '*.mp3' -o report.yaml --by-album
+
+# Also extract embedded front covers to external image files
+$ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover
+
+# Place extracted covers in a custom directory
+$ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover --cover-dir ./artwork
 ```
 
 > [!NOTE]
 > Output directories (such as `sidecars/`) are created automatically if they do not exist.
 
 > [!CAUTION]
-> Writing aggregated reports or sidecar files overwrites existing output and requires confirmation (`-y`, `TAG_CLI_YES=1`, or `CI=true`). Outputting to stdout does not require confirmation.
+> Writing aggregated manifests or sidecar files overwrites existing output and requires confirmation (`-y`, `TAG_CLI_YES=1`, or `CI=true`). Outputting to stdout does not require confirmation.
 
-`--per-file` generates sidecars named `{file_stem}.metadata.{json|yaml}`. If source directories contain files with the same name, they conflict in a single output directory: without `-y`, existing files block later writes; with `-y`, later files silently overwrite earlier ones.
+Manifest output behavior:
 
-JSON/YAML output structure:
+- The exported YAML contains a top-level `files` list. Each entry has `path`, `tags`, and optionally `cover` / `picture_type`.
+- Tag keys are the raw TagLib property keys (usually uppercase, such as `TITLE`). Multi-value tags are reduced to their first value because `apply` expects a single string per tag.
+- Embedded covers are **not** extracted by default. Add `--with-cover` to write the first `Front Cover` image to an external file and reference it from the manifest.
+- When `--with-cover` is used without `--cover-dir`, covers are written next to the manifest: `{manifest_stem}.covers/` for aggregated output, or the sidecar directory for `--per-file`.
+- Failed files are reported on stderr and cause a non-zero exit code, but they do not appear in the manifest.
 
-```json
-{
-  "export_timestamp": "2026-07-02T12:00:00Z",
-  "generator": "tag-cli export metadata",
-  "summary": {
-    "total": 2,
-    "succeeded": 2,
-    "skipped": 0,
-    "failed": 0
-  },
-  "records": [
-    {
-      "file_path": "./song.mp3",
-      "file_name": "song.mp3",
-      "relative_path": "./song.mp3",
-      "file_format": "mp3",
-      "tags": {
-        "title": "Song",
-        "artist": "Artist"
-      },
-      "properties": {
-        "TITLE": ["Song"],
-        "ARTIST": ["Artist"]
-      },
-      "audio": {
-        "length_seconds": 120,
-        "bitrate_kbps": 320,
-        "sample_rate_hz": 44100,
-        "channels": 2
-      },
-      "pictures": {
-        "count": 1,
-        "front_cover_present": true,
-        "summaries": [
-          {
-            "mime_type": "image/jpeg",
-            "picture_type": "Front Cover",
-            "size_bytes": 102400
-          }
-        ]
-      },
-      "read_status": "ok",
-      "error_message": null
-    }
-  ],
-  "failures": []
-}
+Sidecar file names are `{file_stem}.metadata.yaml`. If source directories contain files with the same name, they collide in a single output directory: without `-y`, existing files block later writes; with `-y`, later files silently overwrite earlier ones.
+
+Example aggregated manifest:
+
+```yaml
+files:
+  - path: song.mp3
+    tags:
+      TITLE: Song
+      ARTIST: Artist
 ```
 
-Field descriptions:
+Example manifest with cover:
 
-- `file_path`: File path (relative to the working directory by default; absolute when `--absolute-paths` is used).
-- `file_name` / `relative_path` / `file_format`: File name, relative path, and extension.
-- `tags`: Normalized common tag keys (lowercase / underscore).
-- `properties`: Raw tag key-value pairs returned by TagLib (keys are uppercase, values are lists).
-- `audio`: Audio properties; may be `null`.
-- `pictures`: Embedded picture statistics and summaries.
-- `failures`: Files that failed to read, with `error_category` (such as `corrupt_file`, `read_error`) and `error_message`.
+```yaml
+files:
+  - path: song.mp3
+    tags:
+      TITLE: Song
+      ARTIST: Artist
+    cover: album.covers/song.cover.png
+    picture_type: Front Cover
+```
 
 ### `completions`
 
@@ -818,7 +797,7 @@ Before using batch or destructive commands such as `apply`, `set`, `clear`, and 
 4. **Understand confirmation source priority.** Command-line `-y` > `TAG_CLI_YES` > `CI`. In CI, use `--dry-run` as an explicit validation step, then use `TAG_CLI_YES=1` or `-y` for writes.
 5. **Check manifest paths.** Relative paths are resolved relative to the manifest directory. Nonexistent paths or empty globs silently produce zero matches.
 6. **Validate cover processing.** Verify that `--cover-format`, `--cover-max-size`, and `--cover-max-file-size` meet target platform requirements. PNG size reduction lowers resolution; `--cover-quality` affects only JPEG.
-7. **Watch for sidecar name collisions.** `export metadata --per-file` names files `{file_stem}.metadata.{ext}`. Files with the same name overwrite each other.
+7. **Watch for sidecar name collisions.** `export metadata --per-file` names files `{file_stem}.metadata.yaml`. Files with the same name overwrite each other.
 8. **Failures are not rolled back.** `apply --fail-fast` stops at the first failure, but files processed before that point are already modified.
 
 <a id="automation-examples"></a>
@@ -866,14 +845,34 @@ $ tag-cli set -i song.mp3 --dry-run --replace TITLE="New Title" ARTIST="New Arti
 $ tag-cli set -i song.mp3 -y --replace TITLE="New Title" ARTIST="New Artist"
 ```
 
-### Parse `export metadata` JSON output
+### Export, edit, and re-apply metadata
+
+`export metadata` emits a manifest that `apply` can read directly.
 
 ```bash
-# Output title and artist for every song
-$ tag-cli export metadata -i '*.mp3' -f json | jq '.records[] | {file: .file_path, title: .tags.title, artist: .tags.artist}'
+# Export current metadata to a manifest
+$ tag-cli export metadata -i '*.mp3' -o album.yaml -y
 
-# Count files without a front cover
-$ tag-cli export metadata -i '*.mp3' -f json | jq '[.records[] | select(.pictures.front_cover_present == false)] | length'
+# Edit the manifest with your favorite editor, then preview changes
+$ tag-cli apply -m album.yaml --dry-run
+
+# Apply the changes
+$ tag-cli apply -m album.yaml -y
+```
+
+To also extract embedded cover art for editing outside the audio files:
+
+```bash
+$ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover -y
+```
+
+This writes covers to `album.covers/` and sets `cover` / `picture_type` on each file entry.
+
+### Parse `export metadata` YAML output
+
+```bash
+# List file paths and titles
+$ tag-cli export metadata -i '*.mp3' | yq '.files[] | {path: .path, title: .tags.TITLE}'
 ```
 
 `apply` prints a text report (`Success / Skipped / Failures`) by default. Scripts can check the exit code and stderr text to detect failures.
@@ -907,8 +906,8 @@ jobs:
 
 ```yaml
 # .github/workflows/metadata.yml example snippet
-- name: Export metadata report
-  run: tag-cli export metadata -i 'audio/**/*.mp3' -o metadata-report.json -y
+- name: Export metadata manifest
+  run: tag-cli export metadata -i 'audio/**/*.mp3' -o metadata-report.yaml -y
   env:
     TAG_CLI_YES: "1"
 ```
@@ -994,7 +993,7 @@ tag-cli **does not** create backups automatically. Back up original files before
 
 ### Input file does not exist or cannot be read
 
-For commands such as `info`, `get`, `set`, `clear`, and `cover`, when the file does not exist, the path is wrong, or the format is not recognized by TagLib, they usually output `TagLib error: file is not a valid/recognized audio file for TagLib` and return exit code `1`. `export metadata` records such files in the `failures` array and returns a non-zero exit code only when `Failures > 0`.
+For commands such as `info`, `get`, `set`, `clear`, and `cover`, when the file does not exist, the path is wrong, or the format is not recognized by TagLib, they usually output `TagLib error: file is not a valid/recognized audio file for TagLib` and return exit code `1`. `export metadata` reports such files on stderr and returns a non-zero exit code when any file fails.
 
 <a id="contributing"></a>
 ## Contributing
