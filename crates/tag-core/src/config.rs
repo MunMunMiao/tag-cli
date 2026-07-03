@@ -1,23 +1,22 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Serialize)]
 pub struct Manifest {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub defaults: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_processing: Option<ImageProcessing>,
-    #[serde(default)]
     pub files: Vec<FileEntry>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub recursive: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct ImageProcessing {
     pub format: Option<String>,
     pub max_size: Option<u32>,
@@ -25,13 +24,14 @@ pub struct ImageProcessing {
     pub quality: Option<u8>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Serialize)]
 pub struct FileEntry {
     pub path: PathBuf,
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture_type: Option<String>,
 }
 
@@ -177,6 +177,27 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
+
+    #[test]
+    fn manifest_serializes_minimal_yaml() {
+        let mut tags = BTreeMap::new();
+        tags.insert("TITLE".to_string(), "Song".to_string());
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: PathBuf::from("./song.mp3"),
+                tags,
+                cover: None,
+                picture_type: None,
+            }],
+            ..Manifest::default()
+        };
+        let yaml = serde_yaml::to_string(&manifest).unwrap();
+        assert!(yaml.contains("files:"));
+        assert!(yaml.contains("path: ./song.mp3"));
+        assert!(yaml.contains("TITLE: Song"));
+        assert!(!yaml.contains("defaults:"));
+        assert!(!yaml.contains("paths:"));
+    }
 
     #[test]
     fn load_missing_manifest_errors() {
