@@ -33,7 +33,7 @@ Common workflows:
   tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
 
 Safety:
-  Commands that modify files in place require -y/--yes, TAG_CLI_YES=1/true, or CI=true.
+  Commands that modify files in place require -y/--yes.
   Use --dry-run first when a command supports it.",
     after_help = "Use \"tag-cli <COMMAND> --help\" for more information about a command.",
     help_template = "{before-help}{about-with-newline}
@@ -75,24 +75,9 @@ pub struct Cli {
 }
 
 impl Cli {
-    /// Determine whether a destructive write operation should be considered
-    /// confirmed.
-    ///
-    /// Priority:
-    /// 1. Explicit `-y`/`--yes` flag.
-    /// 2. `TAG_CLI_YES=1` or `TAG_CLI_YES=true`.
-    /// 3. `CI` set to any non-empty value other than `false`.
+    /// Return whether destructive writes were explicitly confirmed.
     pub fn is_confirmed(explicit_yes: bool) -> bool {
-        if explicit_yes {
-            return true;
-        }
-        if std::env::var("TAG_CLI_YES").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) {
-            return true;
-        }
-        if std::env::var("CI").is_ok_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("false")) {
-            return true;
-        }
-        false
+        explicit_yes
     }
 }
 
@@ -309,7 +294,7 @@ pub struct SetArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes"
     )]
     pub yes: bool,
 
@@ -347,7 +332,7 @@ pub struct ClearArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes"
     )]
     pub yes: bool,
 
@@ -456,7 +441,7 @@ pub struct CoverSetArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes"
     )]
     pub yes: bool,
 
@@ -493,7 +478,7 @@ pub struct CoverClearArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes"
     )]
     pub yes: bool,
 
@@ -516,7 +501,7 @@ pub struct ApplyArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for destructive writes; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for destructive writes"
     )]
     pub yes: bool,
 
@@ -749,7 +734,7 @@ pub struct ExportMetadataArgs {
     #[arg(
         short = 'y',
         long,
-        help = "Skip confirmation for output overwrites; also respects TAG_CLI_YES=1/true or CI=true"
+        help = "Skip confirmation for output overwrites"
     )]
     pub yes: bool,
 }
@@ -757,101 +742,25 @@ pub struct ExportMetadataArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    use std::cell::Cell;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-    thread_local! {
-        static WITH_ENV_DEPTH: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn with_env<F>(tag_cli_yes: Option<&str>, ci: Option<&str>, f: F)
-    where
-        F: FnOnce(),
-    {
-        // Allow nested calls (e.g. tests that verify restoration) by tracking
-        // reentrancy depth and only acquiring the lock on the outer call.
-        let guard = WITH_ENV_DEPTH.with(|d| {
-            if d.get() == 0 {
-                Some(ENV_LOCK.lock().unwrap())
-            } else {
-                None
-            }
-        });
-        WITH_ENV_DEPTH.with(|d| d.set(d.get() + 1));
-
-        let old_tag_cli_yes = std::env::var("TAG_CLI_YES").ok();
-        let old_ci = std::env::var("CI").ok();
-
-        unsafe {
-            match tag_cli_yes {
-                Some(v) => std::env::set_var("TAG_CLI_YES", v),
-                None => std::env::remove_var("TAG_CLI_YES"),
-            }
-            match ci {
-                Some(v) => std::env::set_var("CI", v),
-                None => std::env::remove_var("CI"),
-            }
-        }
-
-        f();
-
-        unsafe {
-            match old_tag_cli_yes {
-                Some(v) => std::env::set_var("TAG_CLI_YES", v),
-                None => std::env::remove_var("TAG_CLI_YES"),
-            }
-            match old_ci {
-                Some(v) => std::env::set_var("CI", v),
-                None => std::env::remove_var("CI"),
-            }
-        }
-
-        WITH_ENV_DEPTH.with(|d| d.set(d.get() - 1));
-        drop(guard);
-    }
 
     #[test]
     fn is_confirmed_true_with_explicit_yes() {
-        with_env(None, None, || {
-            assert!(Cli::is_confirmed(true));
-        });
+        assert!(Cli::is_confirmed(true));
     }
 
     #[test]
-    fn is_confirmed_true_with_tag_cli_yes_true() {
-        with_env(Some("true"), None, || {
-            assert!(Cli::is_confirmed(false));
-        });
-    }
+    fn is_confirmed_false_without_explicit_yes_even_when_env_is_set() {
+        unsafe {
+            std::env::set_var("TAG_CLI_YES", "1");
+            std::env::set_var("CI", "true");
+        }
 
-    #[test]
-    fn is_confirmed_true_with_tag_cli_yes_one() {
-        with_env(Some("1"), None, || {
-            assert!(Cli::is_confirmed(false));
-        });
-    }
+        assert!(!Cli::is_confirmed(false));
 
-    #[test]
-    fn is_confirmed_true_with_tag_cli_yes_uppercase() {
-        with_env(Some("TRUE"), None, || {
-            assert!(Cli::is_confirmed(false));
-        });
-    }
-
-    #[test]
-    fn is_confirmed_false_with_neutral_env() {
-        with_env(None, Some("false"), || {
-            assert!(!Cli::is_confirmed(false));
-        });
-    }
-
-    #[test]
-    fn is_confirmed_true_with_ci_true() {
-        with_env(None, Some("true"), || {
-            assert!(Cli::is_confirmed(false));
-        });
+        unsafe {
+            std::env::remove_var("TAG_CLI_YES");
+            std::env::remove_var("CI");
+        }
     }
 
     #[test]
@@ -878,20 +787,6 @@ mod tests {
         };
         let config = opts.to_image_processing_config().unwrap();
         assert_eq!(config.target_format, Some(ImageTargetFormat::Png));
-    }
-
-    #[test]
-    fn with_env_restores_existing_variables() {
-        // Nest two `with_env` calls so the inner one has existing variables to
-        // restore, covering the `Some(v)` restoration branches.
-        with_env(Some("initial-yes"), Some("initial-ci"), || {
-            with_env(Some("true"), Some("true"), || {
-                assert_eq!(std::env::var("TAG_CLI_YES").unwrap(), "true");
-                assert_eq!(std::env::var("CI").unwrap(), "true");
-            });
-            assert_eq!(std::env::var("TAG_CLI_YES").unwrap(), "initial-yes");
-            assert_eq!(std::env::var("CI").unwrap(), "initial-ci");
-        });
     }
 
     #[test]
