@@ -725,21 +725,6 @@ mod tests {
     }
 
     #[test]
-    fn is_confirmed_false_without_explicit_yes_even_when_env_is_set() {
-        unsafe {
-            std::env::set_var("TAG_CLI_YES", "1");
-            std::env::set_var("CI", "true");
-        }
-
-        assert!(!Cli::is_confirmed(false));
-
-        unsafe {
-            std::env::remove_var("TAG_CLI_YES");
-            std::env::remove_var("CI");
-        }
-    }
-
-    #[test]
     fn image_options_jpeg_format() {
         let opts = ImageOptions {
             no_process_cover: false,

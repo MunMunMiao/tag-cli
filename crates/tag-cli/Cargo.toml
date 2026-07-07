@@ -4,9 +4,6 @@ version.workspace = true
 edition.workspace = true
 license = "MIT"
 
-[features]
-test-overrides = []
-
 [[bin]]
 name = "tag-cli"
 path = "src/main.rs"
@@ -32,6 +29,6 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 tiny_http = "0.12"
-tag-cli = { path = ".", features = ["test-overrides"] }
+tag-cli = { path = "." }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "tiff"] }
 taglib-rs = { path = "../taglib-rs", features = ["test-utils"] }

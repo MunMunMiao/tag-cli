@@ -1991,16 +1991,17 @@ fn test_ci_env_does_not_bypass_confirmation() {
 }
 
 #[test]
-fn test_ci_false_does_not_bypass_confirmation() {
+fn test_tag_cli_yes_env_does_not_bypass_confirmation() {
     let tmp = TempDir::new().unwrap();
     let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
 
     cmd()
-        .env("CI", "false")
-        .args(["set", "-i", input.to_str().unwrap(), "TITLE=Ci Title"])
+        .env("TAG_CLI_YES", "1")
+        .args(["set", "-i", input.to_str().unwrap(), "TITLE=Env Title"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("tag-cli set:"));
+        .stderr(predicate::str::contains("tag-cli set:"))
+        .stderr(predicate::str::contains("requires -y/--yes"));
 }
 
 // ---------------------------------------------------------------------------
