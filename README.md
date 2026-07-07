@@ -343,7 +343,7 @@ If `-y` / `--yes` is not provided, the write command exits with an error and mod
 | `-i <path>` | Input audio file path or glob pattern | `info`, `get`, `set`, `clear`, `cover`, `export metadata` |
 | `-o <path>` | Output path: a file for most commands, a directory for sidecar exports, or an image file for cover get | `set`, `clear`, `cover get`, `cover set`, `cover clear`, `export metadata` |
 | `-f <format>` | Output format, or compatibility alias for the manifest path in `apply` | `info`, `get`, `list-keys`, `apply` (alias for `-m`) |
-| `-y`, `--yes` | Skip confirmation prompt | Write commands |
+| `-y`, `--yes` | Explicitly confirm destructive writes and output overwrites | Write commands |
 | `--dry-run` | Preview changes without writing files | `set`, `clear`, `cover set`, `cover clear`, `apply`; not supported by `export metadata` |
 | `--replace`, `-R` | Replace mode for `set`: clear every tag except those listed | `set` |
 
