@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::error::TagCliError;
 use crate::workflow::context::Context;
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub struct ResolveOutputPathStep {
@@ -30,7 +30,7 @@ impl Step for ResolveOutputPathStep {
         "ResolveOutputPath"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let output = match &self.explicit_output {
             Some(o) => {
                 if o == &ctx.input_path {
@@ -51,7 +51,7 @@ impl Step for ResolveOutputPathStep {
             tracing::info!("output path resolved to {}", output.display());
         }
         ctx.output_path = Some(output);
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

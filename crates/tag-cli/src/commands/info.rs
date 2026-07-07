@@ -1,6 +1,5 @@
-use crate::cli::InfoArgs;
+use crate::cli::{InfoArgs, map_format};
 use tag_core::error::TagCliError;
-use tag_core::output::OutputFormat;
 use tag_core::workflow::builder::WorkflowBuilder;
 use tag_core::workflow::context::Context;
 use tag_core::workflow::steps::format_output::FormatOutputStep;
@@ -15,12 +14,4 @@ pub fn run(args: &InfoArgs, verbose: bool) -> Result<(), TagCliError> {
     workflow.run(&mut ctx)?;
     println!("{}", ctx.output.unwrap_or_default());
     Ok(())
-}
-
-fn map_format(format: Option<crate::cli::OutputFormat>) -> OutputFormat {
-    match format {
-        Some(crate::cli::OutputFormat::Json) => OutputFormat::Json,
-        Some(crate::cli::OutputFormat::Yaml) => OutputFormat::Yaml,
-        _ => OutputFormat::Table,
-    }
 }

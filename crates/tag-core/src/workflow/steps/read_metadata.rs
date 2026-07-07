@@ -1,7 +1,7 @@
 use crate::error::TagCliError;
 use crate::taglib::read_metadata_from_path;
 use crate::workflow::context::Context;
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug, Default)]
 pub struct ReadMetadataStep;
@@ -17,14 +17,14 @@ impl Step for ReadMetadataStep {
         "ReadMetadata"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         if ctx.verbose {
             tracing::info!("reading metadata from {}", ctx.input_path.display());
         }
         let metadata = read_metadata_from_path(&ctx.input_path)?;
         ctx.metadata = Some(metadata.clone());
         ctx.original_metadata = Some(metadata);
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

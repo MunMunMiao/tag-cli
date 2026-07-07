@@ -3,7 +3,6 @@
 pub mod config;
 pub mod error;
 pub mod image_proc;
-pub mod keys;
 pub mod output;
 pub mod workflow;
 

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::cli::SetArgs;
+use crate::commands::run_and_report;
 use tag_core::error::TagCliError;
 use tag_core::workflow::builder::WorkflowBuilder;
 use tag_core::workflow::context::{Context, TagUpdates};
@@ -44,14 +45,5 @@ pub fn run(args: &SetArgs, verbose: bool) -> Result<(), TagCliError> {
         .add(Box::new(SaveFileStep::new(save_mode)))
         .build();
 
-    workflow.run(&mut ctx)?;
-    if args.dry_run
-        && let Some(diff) = crate::diff::compute_diff(&ctx)
-    {
-        println!("{}", diff);
-    }
-    for msg in &ctx.report.messages {
-        crate::report::status(msg);
-    }
-    Ok(())
+    run_and_report(&mut ctx, workflow, args.dry_run)
 }

@@ -1,7 +1,7 @@
 use crate::error::TagCliError;
 use crate::output::{OutputFormat, format_info};
 use crate::workflow::context::Context;
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub struct FormatOutputStep {
@@ -19,7 +19,7 @@ impl Step for FormatOutputStep {
         "FormatOutput"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let Some(metadata) = ctx.metadata.as_ref() else {
             return Err(TagCliError::ImageProcessingError(
                 "no metadata to format".to_string(),
@@ -27,7 +27,7 @@ impl Step for FormatOutputStep {
         };
         let file = ctx.input_path.to_string_lossy().to_string();
         ctx.output = Some(format_info(metadata, &file, self.format));
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

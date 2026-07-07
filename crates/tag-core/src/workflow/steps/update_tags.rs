@@ -1,7 +1,7 @@
 use crate::error::TagCliError;
 use crate::taglib::supported_property_keys_set;
 use crate::workflow::context::{Context, TagUpdates};
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub struct UpdateTagsStep {
@@ -19,7 +19,7 @@ impl Step for UpdateTagsStep {
         "UpdateTags"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let mut updates = self.updates.clone();
 
         // Normalize keys to uppercase so manifests and CLI input behave consistently.
@@ -63,7 +63,7 @@ impl Step for UpdateTagsStep {
         }
 
         ctx.tag_updates = Some(updates);
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

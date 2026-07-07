@@ -9,6 +9,13 @@ pub fn generate_flac(path: &Path) {
     generate_audio(path, &["-c:a", "flac"]);
 }
 
+pub fn generate_ogg(path: &Path) {
+    generate_audio(
+        path,
+        &["-c:a", "vorbis", "-strict", "experimental", "-q:a", "3"],
+    );
+}
+
 fn generate_audio(path: &Path, codec_args: &[&str]) {
     let status = Command::new("ffmpeg")
         .arg("-y")

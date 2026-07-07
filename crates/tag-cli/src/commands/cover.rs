@@ -1,4 +1,5 @@
 use crate::cli::{CoverArgs, CoverCommands};
+use crate::commands::run_and_report;
 use tag_core::error::TagCliError;
 use tag_core::workflow::builder::WorkflowBuilder;
 use tag_core::workflow::context::{Context, CoverAction};
@@ -38,7 +39,7 @@ fn cover_get(args: &crate::cli::CoverGetArgs) -> Result<(), TagCliError> {
 
     std::fs::write(&args.output, &picture.data).map_err(TagCliError::Io)?;
 
-    crate::report::status(format!(
+    crate::commands::status(format!(
         "cover saved to {} ({} bytes)",
         args.output.display(),
         picture.data.len()
@@ -66,16 +67,7 @@ fn cover_set(args: &crate::cli::CoverSetArgs, verbose: bool) -> Result<(), TagCl
         .add(Box::new(SaveFileStep::new(SaveMode::Incremental)))
         .build();
 
-    workflow.run(&mut ctx)?;
-    if args.dry_run
-        && let Some(diff) = crate::diff::compute_diff(&ctx)
-    {
-        println!("{}", diff);
-    }
-    for msg in &ctx.report.messages {
-        crate::report::status(msg);
-    }
-    Ok(())
+    run_and_report(&mut ctx, workflow, args.dry_run)
 }
 
 fn cover_clear(args: &crate::cli::CoverClearArgs, verbose: bool) -> Result<(), TagCliError> {
@@ -92,14 +84,5 @@ fn cover_clear(args: &crate::cli::CoverClearArgs, verbose: bool) -> Result<(), T
         .add(Box::new(SaveFileStep::new(SaveMode::Incremental)))
         .build();
 
-    workflow.run(&mut ctx)?;
-    if args.dry_run
-        && let Some(diff) = crate::diff::compute_diff(&ctx)
-    {
-        println!("{}", diff);
-    }
-    for msg in &ctx.report.messages {
-        crate::report::status(msg);
-    }
-    Ok(())
+    run_and_report(&mut ctx, workflow, args.dry_run)
 }

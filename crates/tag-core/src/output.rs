@@ -60,24 +60,7 @@ pub struct PicturesSummary {
     pub summaries: Vec<PictureSummary>,
 }
 
-#[derive(Serialize, Clone)]
-pub struct ExportOutput {
-    pub export_timestamp: String,
-    pub generator: String,
-    pub summary: ExportSummary,
-    pub records: Vec<ExportRecord>,
-    pub failures: Vec<FailureRecord>,
-}
-
-#[derive(Serialize, Clone)]
-pub struct ExportSummary {
-    pub total: usize,
-    pub succeeded: usize,
-    pub skipped: usize,
-    pub failed: usize,
-}
-
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct FailureRecord {
     pub file_path: String,
     pub read_status: String,

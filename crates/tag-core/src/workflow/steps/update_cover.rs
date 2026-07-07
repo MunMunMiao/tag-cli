@@ -1,6 +1,6 @@
 use crate::error::TagCliError;
 use crate::workflow::context::{Context, CoverAction};
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub struct UpdateCoverStep;
@@ -22,14 +22,14 @@ impl Step for UpdateCoverStep {
         "UpdateCover"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         // CoverAction 已在 SaveFileStep 中消费；此处仅做校验或记录。
         if matches!(ctx.cover_action, CoverAction::Set(_)) && ctx.processed_cover.is_none() {
             return Err(TagCliError::ImageProcessingError(
                 "cover was requested but not processed".to_string(),
             ));
         }
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

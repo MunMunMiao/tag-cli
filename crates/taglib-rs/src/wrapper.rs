@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Once;
 
 use super::ffi;
-use super::keys;
+use crate::supported_property_keys;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct Tags {
@@ -68,39 +68,28 @@ impl std::error::Error for TagError {}
 #[inline(never)]
 pub fn read_metadata_from_path(path: &Path) -> Result<Metadata, TagError> {
     init_taglib_globals();
-
-    let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| TagError::InvalidPath)?;
-    let file = unsafe { ffi::taglib_file_new(c_path.as_ptr()) };
-    // Defensive: taglib_file_new can return null in out-of-memory or other
-    // extreme conditions. This branch is not reachable with normal test fixtures,
-    // so it is excluded from coverage measurement to maintain the 100% target.
-    #[cfg(not(coverage))]
-    if file.is_null() {
-        return Err(TagError::OpenFailed);
-    }
-
-    let handle = FileHandle { file };
+    let handle = open_taglib_file(path)?;
     read_metadata_from_file_handle(handle.file, false)
 }
 
 #[inline(never)]
 pub fn read_metadata_from_path_lenient(path: &Path) -> Result<Metadata, TagError> {
     init_taglib_globals();
+    let handle = open_taglib_file(path)?;
+    read_metadata_from_file_handle(handle.file, true)
+}
 
+fn open_taglib_file(path: &Path) -> Result<FileHandle, TagError> {
     let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
         .map_err(|_| TagError::InvalidPath)?;
     let file = unsafe { ffi::taglib_file_new(c_path.as_ptr()) };
-    // Defensive: taglib_file_new can return null in out-of-memory or other
-    // extreme conditions. This branch is not reachable with normal test fixtures,
-    // so it is excluded from coverage measurement to maintain the 100% target.
+    // Defensive: excluded from coverage because test fixtures always open
+    // valid files; normal builds still handle the null case.
     #[cfg(not(coverage))]
     if file.is_null() {
         return Err(TagError::OpenFailed);
     }
-
-    let handle = FileHandle { file };
-    read_metadata_from_file_handle(handle.file, true)
+    Ok(FileHandle { file })
 }
 
 fn read_metadata_from_file_handle(
@@ -115,9 +104,9 @@ fn read_metadata_from_file_handle(
     let tag = unsafe { ffi::taglib_file_tag(file) };
     let tags = read_tags(tag, lenient)?;
 
-    let properties = unsafe { collect_properties(file) };
+    let properties = unsafe { collect_properties(file)? };
     let pictures = unsafe { collect_pictures(file) };
-    let audio = unsafe { collect_audio_properties(file) };
+    let audio = unsafe { collect_audio_properties(file)? };
 
     Ok(Metadata {
         tags,
@@ -175,50 +164,14 @@ pub fn write_properties_to_path(
 ) -> Result<(), TagError> {
     init_taglib_globals();
 
-    let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| TagError::InvalidPath)?;
-    let file = unsafe { ffi::taglib_file_new(c_path.as_ptr()) };
-    // Defensive: taglib_file_new can return null in out-of-memory or other
-    // extreme conditions. This branch is not reachable with normal test fixtures,
-    // so it is excluded from coverage measurement to maintain the 100% target.
-    #[cfg(not(coverage))]
-    if file.is_null() {
-        return Err(TagError::OpenFailed);
-    }
-
-    let handle = FileHandle { file };
+    let handle = open_taglib_file(path)?;
     let valid = unsafe { ffi::taglib_file_is_valid(handle.file) };
     if valid == 0 {
         return Err(TagError::InvalidFile);
     }
 
     unsafe {
-        for (key, values) in updates {
-            let key = std::ffi::CString::new(key.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-
-            let mut cleaned: Vec<&str> = Vec::new();
-            for v in values {
-                let trimmed = v.trim();
-                if !trimmed.is_empty() {
-                    cleaned.push(trimmed);
-                }
-            }
-
-            if cleaned.is_empty() {
-                ffi::taglib_property_set(handle.file, key.as_ptr(), std::ptr::null());
-                continue;
-            }
-
-            let first = cleaned.remove(0);
-            let first =
-                std::ffi::CString::new(first.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-            ffi::taglib_property_set(handle.file, key.as_ptr(), first.as_ptr());
-
-            for v in cleaned {
-                let v = std::ffi::CString::new(v.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-                ffi::taglib_property_set_append(handle.file, key.as_ptr(), v.as_ptr());
-            }
-        }
+        write_property_values(handle.file, updates)?;
 
         match &cover_action {
             CoverWriteAction::Keep => {}
@@ -287,53 +240,45 @@ pub fn write_full_properties_to_path(
 ) -> Result<(), TagError> {
     init_taglib_globals();
 
-    let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
-        .map_err(|_| TagError::InvalidPath)?;
-    let file = unsafe { ffi::taglib_file_new(c_path.as_ptr()) };
-    // Defensive: taglib_file_new can return null in out-of-memory or other
-    // extreme conditions. This branch is not reachable with normal test fixtures,
-    // so it is excluded from coverage measurement to maintain the 100% target.
-    #[cfg(not(coverage))]
-    if file.is_null() {
-        return Err(TagError::OpenFailed);
-    }
-
-    let handle = FileHandle { file };
+    let handle = open_taglib_file(path)?;
     let valid = unsafe { ffi::taglib_file_is_valid(handle.file) };
     if valid == 0 {
         return Err(TagError::InvalidFile);
     }
 
     unsafe {
-        for key in keys::supported_property_keys() {
-            let key = std::ffi::CString::new(key.as_bytes())
-                .expect("supported property keys contain no NUL bytes");
-            ffi::taglib_property_set(handle.file, key.as_ptr(), std::ptr::null());
+        // Full-replace should leave exactly the requested tags. Remove any
+        // existing keys that are not being set, including unsupported/custom
+        // tags that TagLib reports from the file (e.g. Ogg END/ENDGRAN).
+        let existing_keys = ffi::taglib_property_keys(handle.file);
+
+        if existing_keys.is_null() {
+            // If TagLib cannot enumerate the existing keys, fall back to
+            // clearing every supported key so that full-replace still removes
+            // the common tags we know about.
+            for key in supported_property_keys() {
+                if !properties.contains_key(key) {
+                    let key = std::ffi::CString::new(key.as_bytes())
+                        .map_err(|_| TagError::InvalidPath)?;
+                    ffi::taglib_property_set(handle.file, key.as_ptr(), std::ptr::null());
+                }
+            }
+        } else {
+            let mut cur = existing_keys;
+            while !(*cur).is_null() {
+                let key_ptr = *cur;
+                let key = CStr::from_ptr(key_ptr)
+                    .to_string_lossy()
+                    .to_ascii_uppercase();
+                if !properties.contains_key(&key) {
+                    ffi::taglib_property_set(handle.file, key_ptr, std::ptr::null());
+                }
+                cur = cur.add(1);
+            }
+            ffi::taglib_property_free(existing_keys);
         }
 
-        for (key, values) in properties {
-            let key = std::ffi::CString::new(key.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-
-            let mut cleaned: Vec<&str> = values
-                .iter()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
-            if cleaned.is_empty() {
-                continue;
-            }
-
-            let first = cleaned.remove(0);
-            let first =
-                std::ffi::CString::new(first.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-            ffi::taglib_property_set(handle.file, key.as_ptr(), first.as_ptr());
-
-            for v in cleaned {
-                let v = std::ffi::CString::new(v.as_bytes()).map_err(|_| TagError::InvalidPath)?;
-                ffi::taglib_property_set_append(handle.file, key.as_ptr(), v.as_ptr());
-            }
-        }
+        write_property_values(handle.file, properties)?;
 
         match &cover_action {
             CoverWriteAction::Keep => {}
@@ -376,6 +321,36 @@ pub fn write_full_properties_to_path(
     let _ok = unsafe { ffi::taglib_file_save(handle.file) };
     if _ok == 0 {
         return Err(TagError::SaveFailed);
+    }
+    Ok(())
+}
+
+unsafe fn write_property_values(
+    file: *mut ffi::TagLib_File,
+    properties: &BTreeMap<String, Vec<String>>,
+) -> Result<(), TagError> {
+    for (key, values) in properties {
+        let key = std::ffi::CString::new(key.as_bytes()).map_err(|_| TagError::InvalidPath)?;
+
+        let mut cleaned: Vec<&str> = values
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if cleaned.is_empty() {
+            unsafe { ffi::taglib_property_set(file, key.as_ptr(), std::ptr::null()) };
+            continue;
+        }
+
+        let first = cleaned.remove(0);
+        let first = std::ffi::CString::new(first.as_bytes()).map_err(|_| TagError::InvalidPath)?;
+        unsafe { ffi::taglib_property_set(file, key.as_ptr(), first.as_ptr()) };
+
+        for v in cleaned {
+            let v = std::ffi::CString::new(v.as_bytes()).map_err(|_| TagError::InvalidPath)?;
+            unsafe { ffi::taglib_property_set_append(file, key.as_ptr(), v.as_ptr()) };
+        }
     }
     Ok(())
 }
@@ -458,8 +433,7 @@ unsafe fn set_cover_picture(
             ptrs.as_ptr(),
         )
     };
-    // Defensive: excluded from coverage because test fixtures do not trigger
-    // a failed cover write.
+    // Defensive: test fixtures never fail to set cover.
     #[cfg(not(coverage))]
     if _ok == 0 {
         return Err(TagError::CoverSetFailed);
@@ -476,8 +450,7 @@ unsafe fn clear_cover_picture(file: *mut ffi::TagLib_File) -> Result<(), TagErro
             std::ptr::null(),
         )
     };
-    // Defensive: excluded from coverage because test fixtures do not trigger
-    // a failed cover clear.
+    // Defensive: test fixtures never fail to clear cover.
     #[cfg(not(coverage))]
     if _ok == 0 {
         return Err(TagError::CoverSetFailed);
@@ -504,12 +477,14 @@ pub unsafe fn take_taglib_string(ptr: *mut std::os::raw::c_char) -> Option<Strin
     if value.is_empty() { None } else { Some(value) }
 }
 
-unsafe fn collect_properties(file: *const ffi::TagLib_File) -> BTreeMap<String, Vec<String>> {
+unsafe fn collect_properties(
+    file: *const ffi::TagLib_File,
+) -> Result<BTreeMap<String, Vec<String>>, TagError> {
     let mut out = BTreeMap::new();
 
     let keys = unsafe { ffi::taglib_property_keys(file) };
     if keys.is_null() {
-        return out;
+        return Ok(out);
     }
 
     let mut cur = keys;
@@ -520,57 +495,48 @@ unsafe fn collect_properties(file: *const ffi::TagLib_File) -> BTreeMap<String, 
             .into_owned();
 
         let values_ptr = unsafe { ffi::taglib_property_get(file, key_ptr) };
-        let mut values = Vec::new();
-        // The null guard is defensive; coverage builds exercise the non-null path
-        // used by all test fixtures.
+        // Defensive: excluded from coverage; TagLib returns non-null for matched keys.
         #[cfg(not(coverage))]
-        if !values_ptr.is_null() {
-            let mut vcur = values_ptr;
-            while !unsafe { (*vcur).is_null() } {
-                let v = unsafe { CStr::from_ptr(*vcur) }
-                    .to_string_lossy()
-                    .into_owned();
-                values.push(v);
-                vcur = unsafe { vcur.add(1) };
-            }
-            unsafe { ffi::taglib_property_free(values_ptr) };
+        if values_ptr.is_null() {
+            cur = unsafe { cur.add(1) };
+            continue;
         }
-        #[cfg(coverage)]
-        {
-            let mut vcur = values_ptr;
-            while !unsafe { (*vcur).is_null() } {
-                let v = unsafe { CStr::from_ptr(*vcur) }
-                    .to_string_lossy()
-                    .into_owned();
-                values.push(v);
-                vcur = unsafe { vcur.add(1) };
-            }
-            unsafe { ffi::taglib_property_free(values_ptr) };
+
+        let mut values = Vec::new();
+        let mut vcur = values_ptr;
+        while !unsafe { (*vcur).is_null() } {
+            let v = unsafe { CStr::from_ptr(*vcur) }
+                .to_string_lossy()
+                .into_owned();
+            values.push(v);
+            vcur = unsafe { vcur.add(1) };
         }
+        unsafe { ffi::taglib_property_free(values_ptr) };
 
         out.insert(key, values);
         cur = unsafe { cur.add(1) };
     }
 
     unsafe { ffi::taglib_property_free(keys) };
-    out
+    Ok(out)
 }
 
-unsafe fn collect_audio_properties(file: *const ffi::TagLib_File) -> Option<AudioProperties> {
+unsafe fn collect_audio_properties(
+    file: *const ffi::TagLib_File,
+) -> Result<Option<AudioProperties>, TagError> {
     let ap = unsafe { ffi::taglib_file_audioproperties(file) };
-    // Defensive: excluded from coverage because test fixtures always provide
-    // valid audio properties.
+    // Defensive: excluded from coverage; test fixtures always expose audio properties.
     #[cfg(not(coverage))]
     if ap.is_null() {
-        return None;
+        return Ok(None);
     }
 
-    Some(AudioProperties {
+    Ok(Some(AudioProperties {
         length_seconds: unsafe { ffi::taglib_audioproperties_length(ap) },
         bitrate_kbps: unsafe { ffi::taglib_audioproperties_bitrate(ap) },
         sample_rate_hz: unsafe { ffi::taglib_audioproperties_samplerate(ap) },
         channels: unsafe { ffi::taglib_audioproperties_channels(ap) },
-    })
+    }))
 }
 
 unsafe fn collect_pictures(file: *const ffi::TagLib_File) -> Vec<Picture> {

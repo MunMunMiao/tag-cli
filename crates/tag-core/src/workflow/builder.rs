@@ -41,11 +41,8 @@ mod tests {
             "Dummy"
         }
 
-        fn execute(
-            &self,
-            _ctx: &mut Context,
-        ) -> Result<crate::workflow::step::StepOutcome, TagCliError> {
-            Ok(crate::workflow::step::StepOutcome::Continue)
+        fn execute(&self, _ctx: &mut Context) -> Result<(), TagCliError> {
+            Ok(())
         }
     }
 

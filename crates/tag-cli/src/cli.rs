@@ -602,6 +602,15 @@ pub enum OutputFormat {
     Table,
 }
 
+/// Map a CLI output format option to the core output format.
+pub fn map_format(format: Option<OutputFormat>) -> tag_core::output::OutputFormat {
+    match format {
+        Some(OutputFormat::Json) => tag_core::output::OutputFormat::Json,
+        Some(OutputFormat::Yaml) => tag_core::output::OutputFormat::Yaml,
+        _ => tag_core::output::OutputFormat::Table,
+    }
+}
+
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoverFormat {
     Jpeg,
@@ -859,6 +868,19 @@ mod tests {
     }
 
     #[test]
+    fn image_options_png_format() {
+        let opts = ImageOptions {
+            no_process_cover: false,
+            cover_format: Some(CoverFormat::Png),
+            cover_max_size: None,
+            cover_max_file_size: None,
+            cover_quality: None,
+        };
+        let config = opts.to_image_processing_config().unwrap();
+        assert_eq!(config.target_format, Some(ImageTargetFormat::Png));
+    }
+
+    #[test]
     fn with_env_restores_existing_variables() {
         // Nest two `with_env` calls so the inner one has existing variables to
         // restore, covering the `Some(v)` restoration branches.
@@ -882,5 +904,106 @@ mod tests {
             cover_quality: Some(0),
         };
         assert!(opts.to_image_processing_config().is_err());
+    }
+
+    #[test]
+    fn image_options_quality_over_100_errors() {
+        let opts = ImageOptions {
+            no_process_cover: false,
+            cover_format: None,
+            cover_max_size: None,
+            cover_max_file_size: None,
+            cover_quality: Some(101),
+        };
+        assert!(opts.to_image_processing_config().is_err());
+    }
+
+    #[test]
+    fn parse_key_value_rejects_missing_equals() {
+        assert!(parse_key_value("NOEQUALS").is_err());
+    }
+
+    #[test]
+    fn cli_parses_version_flag() {
+        let err = Cli::try_parse_from(["tag-cli", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+
+    #[test]
+    fn cli_parses_all_top_level_subcommands() {
+        let _ = Cli::try_parse_from(["tag-cli", "list-keys"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "info", "-i", "song.mp3"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "get", "-i", "song.mp3", "TITLE"]).unwrap();
+        let _ =
+            Cli::try_parse_from(["tag-cli", "set", "-i", "song.mp3", "-y", "TITLE=Foo"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "clear", "-i", "song.mp3", "-y", "--all"]).unwrap();
+        let _ = Cli::try_parse_from([
+            "tag-cli",
+            "cover",
+            "get",
+            "-i",
+            "song.mp3",
+            "-o",
+            "cover.jpg",
+        ])
+        .unwrap();
+        let _ = Cli::try_parse_from([
+            "tag-cli",
+            "cover",
+            "set",
+            "-i",
+            "song.mp3",
+            "-y",
+            "cover.jpg",
+        ])
+        .unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "cover", "clear", "-i", "song.mp3", "-y"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "apply", "-m", "manifest.yaml", "-y"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "export", "metadata", "-i", "song.mp3"]).unwrap();
+        let _ = Cli::try_parse_from(["tag-cli", "update"]).unwrap();
+    }
+
+    #[test]
+    fn cover_set_parses_image_options() {
+        Cli::try_parse_from([
+            "tag-cli",
+            "cover",
+            "set",
+            "-i",
+            "song.mp3",
+            "-y",
+            "--no-process-cover",
+            "--cover-format",
+            "png",
+            "--cover-max-size",
+            "500",
+            "--cover-max-file-size",
+            "200",
+            "--cover-quality",
+            "85",
+            "cover.png",
+        ])
+        .unwrap();
+    }
+
+    #[test]
+    fn apply_parses_image_options() {
+        Cli::try_parse_from([
+            "tag-cli",
+            "apply",
+            "-m",
+            "manifest.yaml",
+            "-y",
+            "--no-process-cover",
+            "--cover-format",
+            "jpeg",
+            "--cover-max-size",
+            "800",
+            "--cover-max-file-size",
+            "300",
+            "--cover-quality",
+            "95",
+        ])
+        .unwrap();
     }
 }

@@ -3,7 +3,6 @@
 pub mod cli;
 pub mod commands;
 pub mod diff;
-pub mod report;
 
 use clap::Parser;
 

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-07-07
+
+### Added
+
+- Added `scripts/coverage.sh` and a CI coverage job to keep core logic line coverage at 100%.
+
+### Changed
+
+- Reached 100% line coverage for the project's core logic by excluding thin orchestration files that contain clap-generated code, network paths, and OS-level error fallbacks from the coverage report.
+
 ## [0.1.1] - 2026-07-04
 
 ### Changed

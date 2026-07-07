@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::TagCliError;
 use crate::workflow::context::{AudioFormat, Context};
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug, Default)]
 pub struct DetectAudioFormatStep;
@@ -18,13 +18,13 @@ impl Step for DetectAudioFormatStep {
         "DetectAudioFormat"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let format = detect_format(&ctx.input_path);
         if ctx.verbose {
             tracing::info!("detected format: {:?}", format);
         }
         ctx.audio_format = Some(format);
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

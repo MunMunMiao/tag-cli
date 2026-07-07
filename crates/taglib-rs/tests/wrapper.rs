@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use taglib_rs::test_utils::{generate_flac, generate_mp3};
+use taglib_rs::test_utils::{generate_flac, generate_mp3, generate_ogg};
 use taglib_rs::{
     AudioProperties, CoverWriteAction, Metadata, Picture, TagError, Tags, read_metadata_from_path,
     take_taglib_borrowed_string, take_taglib_string, write_full_properties_to_path,
@@ -373,6 +373,93 @@ fn full_replace_skips_empty_values() {
     let tmp = TempDir::new().unwrap();
     let input = tmp.path().join("input.mp3");
     generate_mp3(&input);
+
+    let mut props = BTreeMap::new();
+    props.insert("TITLE".to_string(), vec!["   ".to_string()]);
+    write_full_properties_to_path(&input, &props, CoverWriteAction::Keep).unwrap();
+
+    let metadata = read_metadata_from_path(&input).unwrap();
+    assert!(!metadata.properties.contains_key("TITLE"));
+}
+
+#[test]
+fn full_replace_clears_unsupported_tags_mp3() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.mp3");
+    generate_mp3(&input);
+
+    let mut initial = BTreeMap::new();
+    initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+    initial.insert("CUSTOMTAG".to_string(), vec!["Custom".to_string()]);
+    write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+    let mut props = BTreeMap::new();
+    props.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+    write_full_properties_to_path(&input, &props, CoverWriteAction::Keep).unwrap();
+
+    let metadata = read_metadata_from_path(&input).unwrap();
+    assert_eq!(
+        metadata.properties.get("TITLE"),
+        Some(&vec!["New Title".to_string()])
+    );
+    assert!(!metadata.properties.contains_key("CUSTOMTAG"));
+}
+
+#[test]
+fn full_replace_clears_unsupported_tags_flac() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.flac");
+    generate_flac(&input);
+
+    let mut initial = BTreeMap::new();
+    initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+    initial.insert("CUSTOMTAG".to_string(), vec!["Custom".to_string()]);
+    write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+    let mut props = BTreeMap::new();
+    props.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+    write_full_properties_to_path(&input, &props, CoverWriteAction::Keep).unwrap();
+
+    let metadata = read_metadata_from_path(&input).unwrap();
+    assert_eq!(
+        metadata.properties.get("TITLE"),
+        Some(&vec!["New Title".to_string()])
+    );
+    assert!(!metadata.properties.contains_key("CUSTOMTAG"));
+}
+
+#[test]
+fn full_replace_clears_unsupported_tags_ogg() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.ogg");
+    generate_ogg(&input);
+
+    let mut initial = BTreeMap::new();
+    initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+    initial.insert("CUSTOMTAG".to_string(), vec!["Custom".to_string()]);
+    write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+    let mut props = BTreeMap::new();
+    props.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+    write_full_properties_to_path(&input, &props, CoverWriteAction::Keep).unwrap();
+
+    let metadata = read_metadata_from_path(&input).unwrap();
+    assert_eq!(
+        metadata.properties.get("TITLE"),
+        Some(&vec!["New Title".to_string()])
+    );
+    assert!(!metadata.properties.contains_key("CUSTOMTAG"));
+}
+
+#[test]
+fn full_replace_with_empty_value_clears_existing_key() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.mp3");
+    generate_mp3(&input);
+
+    let mut initial = BTreeMap::new();
+    initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+    write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
 
     let mut props = BTreeMap::new();
     props.insert("TITLE".to_string(), vec!["   ".to_string()]);

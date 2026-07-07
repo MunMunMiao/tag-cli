@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::error::TagCliError;
 use crate::taglib::{CoverWriteAction, write_full_properties_to_path, write_properties_to_path};
 use crate::workflow::context::{Context, CoverAction};
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub enum SaveMode {
@@ -28,7 +28,7 @@ impl Step for SaveFileStep {
     }
 
     #[inline(never)]
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let output_path = ctx.output_path.clone().unwrap_or(ctx.input_path.clone());
 
         if ctx.dry_run {
@@ -38,7 +38,7 @@ impl Step for SaveFileStep {
             if ctx.verbose {
                 tracing::info!("[dry-run] would save to {}", output_path.display());
             }
-            return Ok(StepOutcome::Continue);
+            return Ok(());
         }
 
         if ctx.verbose {
@@ -92,7 +92,7 @@ impl Step for SaveFileStep {
             .messages
             .push(format!("saved to {}", output_path.display()));
 
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 
@@ -124,7 +124,7 @@ mod tests {
     };
     use crate::workflow::context::TagUpdates;
     use std::collections::BTreeMap;
-    use taglib_rs::test_utils::generate_mp3;
+    use taglib_rs::test_utils::{generate_flac, generate_mp3, generate_ogg};
     use tempfile::TempDir;
 
     #[test]
@@ -493,6 +493,99 @@ mod tests {
             Some(&vec!["New Title".to_string()])
         );
         assert!(!metadata.properties.contains_key("ARTIST"));
+    }
+
+    #[test]
+    fn full_replace_removes_unsupported_tags() {
+        let tmp = TempDir::new().unwrap();
+        let input = tmp.path().join("input.mp3");
+        generate_mp3(&input);
+
+        let mut initial = BTreeMap::new();
+        initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+        initial.insert("CUSTOMTAG".to_string(), vec!["Custom Value".to_string()]);
+        write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+        let step = SaveFileStep::new(SaveMode::FullReplace);
+        let mut ctx = Context::new(&input, false, false);
+        let mut sets = BTreeMap::new();
+        sets.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+        ctx.tag_updates = Some(TagUpdates {
+            sets,
+            clears: vec![],
+            clear_all: false,
+            replace: false,
+        });
+        assert!(step.execute(&mut ctx).is_ok());
+
+        let metadata = read_metadata_from_path(&input).unwrap();
+        assert_eq!(
+            metadata.properties.get("TITLE"),
+            Some(&vec!["New Title".to_string()])
+        );
+        assert!(!metadata.properties.contains_key("CUSTOMTAG"));
+    }
+
+    #[test]
+    fn full_replace_removes_unsupported_tags_flac() {
+        let tmp = TempDir::new().unwrap();
+        let input = tmp.path().join("input.flac");
+        generate_flac(&input);
+
+        let mut initial = BTreeMap::new();
+        initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+        initial.insert("CUSTOMTAG".to_string(), vec!["Custom Value".to_string()]);
+        write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+        let step = SaveFileStep::new(SaveMode::FullReplace);
+        let mut ctx = Context::new(&input, false, false);
+        let mut sets = BTreeMap::new();
+        sets.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+        ctx.tag_updates = Some(TagUpdates {
+            sets,
+            clears: vec![],
+            clear_all: false,
+            replace: false,
+        });
+        assert!(step.execute(&mut ctx).is_ok());
+
+        let metadata = read_metadata_from_path(&input).unwrap();
+        assert_eq!(
+            metadata.properties.get("TITLE"),
+            Some(&vec!["New Title".to_string()])
+        );
+        assert!(!metadata.properties.contains_key("CUSTOMTAG"));
+    }
+
+    #[test]
+    fn full_replace_removes_unsupported_tags_ogg() {
+        let tmp = TempDir::new().unwrap();
+        let input = tmp.path().join("input.ogg");
+        generate_ogg(&input);
+
+        let mut initial = BTreeMap::new();
+        initial.insert("TITLE".to_string(), vec!["Old Title".to_string()]);
+        initial.insert("CUSTOMTAG".to_string(), vec!["Custom Value".to_string()]);
+        write_properties_to_path(&input, &initial, CoverWriteAction::Keep).unwrap();
+
+        let step = SaveFileStep::new(SaveMode::FullReplace);
+        let mut ctx = Context::new(&input, false, false);
+        let mut sets = BTreeMap::new();
+        sets.insert("TITLE".to_string(), vec!["New Title".to_string()]);
+        ctx.tag_updates = Some(TagUpdates {
+            sets,
+            clears: vec![],
+            clear_all: false,
+            replace: false,
+        });
+        assert!(step.execute(&mut ctx).is_ok());
+
+        let metadata = read_metadata_from_path(&input).unwrap();
+        assert_eq!(
+            metadata.properties.get("TITLE"),
+            Some(&vec!["New Title".to_string()])
+        );
+        assert!(!metadata.properties.contains_key("CUSTOMTAG"));
     }
 
     #[test]

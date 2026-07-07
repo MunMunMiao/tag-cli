@@ -36,8 +36,18 @@ pub fn process_cover_image(
         return Ok(ProcessedImage {
             data,
             mime_type: mime,
-            original_info: image_info("unknown", 0, 0, 0),
-            processed_info: image_info("unknown", 0, 0, 0),
+            original_info: ImageInfo {
+                format: "unknown".to_string(),
+                width: 0,
+                height: 0,
+                size_bytes: 0,
+            },
+            processed_info: ImageInfo {
+                format: "unknown".to_string(),
+                width: 0,
+                height: 0,
+                size_bytes: 0,
+            },
         });
     }
 
@@ -84,18 +94,18 @@ pub fn process_cover_image(
         strip_exif_lossless(&bytes, format).map(|stripped| ProcessedImage {
             data: stripped.clone(),
             mime_type: mime_type_for_format(target_format),
-            original_info: image_info(
-                format_name(format),
-                original_width,
-                original_height,
-                bytes.len(),
-            ),
-            processed_info: image_info(
-                format_name(format),
-                original_width,
-                original_height,
-                stripped.len(),
-            ),
+            original_info: ImageInfo {
+                format: format_name(format),
+                width: original_width,
+                height: original_height,
+                size_bytes: bytes.len(),
+            },
+            processed_info: ImageInfo {
+                format: format_name(format),
+                width: original_width,
+                height: original_height,
+                size_bytes: stripped.len(),
+            },
         })
     } else {
         None
@@ -113,18 +123,18 @@ pub fn process_cover_image(
             ProcessedImage {
                 data,
                 mime_type,
-                original_info: image_info(
-                    format_name(format),
-                    original_width,
-                    original_height,
-                    bytes.len(),
-                ),
-                processed_info: image_info(
-                    format_name(target_image_format(target_format)),
-                    processed_width,
-                    processed_height,
-                    processed_size,
-                ),
+                original_info: ImageInfo {
+                    format: format_name(format),
+                    width: original_width,
+                    height: original_height,
+                    size_bytes: bytes.len(),
+                },
+                processed_info: ImageInfo {
+                    format: format_name(target_image_format(target_format)),
+                    width: processed_width,
+                    height: processed_height,
+                    size_bytes: processed_size,
+                },
             }
         }
     };
@@ -164,15 +174,6 @@ fn mime_type_for_format(target: ImageTargetFormat) -> String {
     match target {
         ImageTargetFormat::Jpeg => "image/jpeg".to_string(),
         ImageTargetFormat::Png => "image/png".to_string(),
-    }
-}
-
-fn image_info(format: impl Into<String>, width: u32, height: u32, size_bytes: usize) -> ImageInfo {
-    ImageInfo {
-        format: format.into(),
-        width,
-        height,
-        size_bytes,
     }
 }
 

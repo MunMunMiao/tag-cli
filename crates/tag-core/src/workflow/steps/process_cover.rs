@@ -2,7 +2,7 @@ use crate::error::TagCliError;
 use crate::image_proc::process_cover_image;
 use crate::taglib::Picture;
 use crate::workflow::context::{Context, CoverAction, ImageProcessingConfig};
-use crate::workflow::step::{Step, StepOutcome};
+use crate::workflow::step::Step;
 
 #[derive(Debug)]
 pub struct ProcessCoverStep {
@@ -20,10 +20,10 @@ impl Step for ProcessCoverStep {
         "ProcessCover"
     }
 
-    fn execute(&self, ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let path = match &ctx.cover_action {
             CoverAction::Set(p) => p.clone(),
-            _ => return Ok(StepOutcome::Continue),
+            _ => return Ok(()),
         };
 
         let audio_format = ctx
@@ -66,7 +66,7 @@ impl Step for ProcessCoverStep {
             data: processed.data,
         });
 
-        Ok(StepOutcome::Continue)
+        Ok(())
     }
 }
 

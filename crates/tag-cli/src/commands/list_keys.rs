@@ -1,4 +1,4 @@
-use crate::cli::ListKeysArgs;
+use crate::cli::{ListKeysArgs, map_format};
 use tag_core::output::OutputFormat;
 use tag_core::taglib::supported_property_keys;
 
@@ -12,17 +12,7 @@ pub fn run(args: &ListKeysArgs) {
             println!("{}", serde_yaml::to_string(keys).unwrap_or_default());
         }
         OutputFormat::Table => {
-            for key in keys.iter() {
-                println!("{}", key);
-            }
+            println!("{}", keys.join("\n"));
         }
-    }
-}
-
-fn map_format(format: Option<crate::cli::OutputFormat>) -> OutputFormat {
-    match format {
-        Some(crate::cli::OutputFormat::Json) => OutputFormat::Json,
-        Some(crate::cli::OutputFormat::Yaml) => OutputFormat::Yaml,
-        _ => OutputFormat::Table,
     }
 }

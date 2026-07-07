@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::cli::ApplyArgs;
+use crate::commands::run_and_report;
 use tag_core::config::{ImageProcessing, Manifest};
 use tag_core::error::TagCliError;
 use tag_core::workflow::builder::WorkflowBuilder;
@@ -85,13 +86,9 @@ pub fn run(args: &ApplyArgs, verbose: bool) -> Result<(), TagCliError> {
 
         let workflow = builder.build();
 
-        match workflow.run(&mut ctx) {
+        match run_and_report(&mut ctx, workflow, args.dry_run) {
             Ok(()) => {
                 if args.dry_run {
-                    let _ = crate::diff::compute_diff(&ctx).map(|diff| println!("{}", diff));
-                    for msg in &ctx.report.messages {
-                        eprintln!("{}", msg);
-                    }
                     skipped.push(input_path);
                 } else {
                     successes.push(input_path);
@@ -106,17 +103,17 @@ pub fn run(args: &ApplyArgs, verbose: bool) -> Result<(), TagCliError> {
         }
     }
 
-    crate::report::status(format!("Success: {}", successes.len()));
+    crate::commands::status(format!("Success: {}", successes.len()));
     for p in &successes {
-        crate::report::status(format!("  ok {}", p.display()));
+        crate::commands::status(format!("  ok {}", p.display()));
     }
-    crate::report::status(format!("Skipped: {}", skipped.len()));
+    crate::commands::status(format!("Skipped: {}", skipped.len()));
     for p in &skipped {
-        crate::report::status(format!("  skip {} (dry-run)", p.display()));
+        crate::commands::status(format!("  skip {} (dry-run)", p.display()));
     }
-    crate::report::status(format!("Failures: {}", failures.len()));
+    crate::commands::status(format!("Failures: {}", failures.len()));
     for (p, e) in &failures {
-        crate::report::status(format!("  err {}: {}", p.display(), e));
+        crate::commands::status(format!("  err {}: {}", p.display(), e));
     }
 
     if failures.is_empty() {

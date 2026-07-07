@@ -1,4 +1,4 @@
-use crate::cli::GetArgs;
+use crate::cli::{GetArgs, map_format};
 use tag_core::error::TagCliError;
 use tag_core::output::{OutputFormat, format_get};
 use tag_core::workflow::builder::WorkflowBuilder;
@@ -21,14 +21,6 @@ pub fn run(args: &GetArgs, verbose: bool) -> Result<(), TagCliError> {
     Ok(())
 }
 
-fn map_format(format: Option<crate::cli::OutputFormat>) -> OutputFormat {
-    match format {
-        Some(crate::cli::OutputFormat::Json) => OutputFormat::Json,
-        Some(crate::cli::OutputFormat::Yaml) => OutputFormat::Yaml,
-        _ => OutputFormat::Table,
-    }
-}
-
 #[derive(Debug)]
 struct FormatGetOutputStep {
     keys: Vec<String>,
@@ -46,15 +38,12 @@ impl tag_core::workflow::step::Step for FormatGetOutputStep {
         "FormatGetOutput"
     }
 
-    fn execute(
-        &self,
-        ctx: &mut Context,
-    ) -> Result<tag_core::workflow::step::StepOutcome, TagCliError> {
+    fn execute(&self, ctx: &mut Context) -> Result<(), TagCliError> {
         let Some(metadata) = ctx.metadata.as_ref() else {
             return Err(TagCliError::ImageProcessingError("no metadata".to_string()));
         };
         ctx.output = Some(format_get(metadata, &self.keys, self.format));
-        Ok(tag_core::workflow::step::StepOutcome::Continue)
+        Ok(())
     }
 }
 
@@ -81,14 +70,14 @@ mod tests {
     #[test]
     fn map_format_all_variants() {
         assert_eq!(
-            map_format(Some(crate::cli::OutputFormat::Json)),
+            crate::cli::map_format(Some(crate::cli::OutputFormat::Json)),
             OutputFormat::Json
         );
         assert_eq!(
-            map_format(Some(crate::cli::OutputFormat::Yaml)),
+            crate::cli::map_format(Some(crate::cli::OutputFormat::Yaml)),
             OutputFormat::Yaml
         );
-        assert_eq!(map_format(None), OutputFormat::Table);
+        assert_eq!(crate::cli::map_format(None), OutputFormat::Table);
     }
 
     #[test]

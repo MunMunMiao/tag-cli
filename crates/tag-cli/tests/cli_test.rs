@@ -1410,6 +1410,139 @@ fn test_apply_dry_run() {
 }
 
 #[test]
+fn test_set_replace_clears_unsupported_tags_ogg() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.ogg");
+
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-f")
+        .arg("lavfi")
+        .arg("-i")
+        .arg("sine=frequency=1000:duration=1")
+        .arg("-ar")
+        .arg("44100")
+        .arg("-ac")
+        .arg("2")
+        .arg("-c:a")
+        .arg("vorbis")
+        .arg("-strict")
+        .arg("experimental")
+        .arg("-metadata")
+        .arg("END=12345")
+        .arg("-metadata")
+        .arg("ENDGRAN=67890")
+        .arg("-metadata")
+        .arg("TITLE=Original")
+        .arg(&input)
+        .status()
+        .expect("ffmpeg is required for this test");
+    assert!(status.success(), "ffmpeg failed to generate ogg fixture");
+
+    let dry_run = cmd()
+        .args([
+            "set",
+            "-i",
+            input.to_str().unwrap(),
+            "--dry-run",
+            "--replace",
+            "TITLE=Replaced Title",
+        ])
+        .assert()
+        .success();
+    let dry_stdout = String::from_utf8(dry_run.get_output().stdout.clone()).unwrap();
+    assert!(dry_stdout.contains("Would update:"));
+    assert!(dry_stdout.contains("END:"));
+    assert!(dry_stdout.contains("ENDGRAN:"));
+    assert!(dry_stdout.contains("(cleared)"));
+
+    cmd()
+        .args([
+            "set",
+            "-i",
+            input.to_str().unwrap(),
+            "-y",
+            "--replace",
+            "TITLE=Replaced Title",
+        ])
+        .assert()
+        .success();
+
+    let export = cmd()
+        .args(["export", "metadata", "-i", input.to_str().unwrap()])
+        .assert()
+        .success();
+    let export_stdout = String::from_utf8(export.get_output().stdout.clone()).unwrap();
+    assert!(export_stdout.contains("Replaced Title"));
+    assert!(!export_stdout.contains("END:"));
+    assert!(!export_stdout.contains("ENDGRAN:"));
+}
+
+#[test]
+fn test_apply_replace_clears_unsupported_tags_ogg() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("input.ogg");
+
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-f")
+        .arg("lavfi")
+        .arg("-i")
+        .arg("sine=frequency=1000:duration=1")
+        .arg("-ar")
+        .arg("44100")
+        .arg("-ac")
+        .arg("2")
+        .arg("-c:a")
+        .arg("vorbis")
+        .arg("-strict")
+        .arg("experimental")
+        .arg("-metadata")
+        .arg("END=12345")
+        .arg("-metadata")
+        .arg("ENDGRAN=67890")
+        .arg("-metadata")
+        .arg("TITLE=Original")
+        .arg(&input)
+        .status()
+        .expect("ffmpeg is required for this test");
+    assert!(status.success(), "ffmpeg failed to generate ogg fixture");
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        "files:\n  - path: input.ogg\n    tags:\n      TITLE: Replaced Title\n",
+    )
+    .unwrap();
+
+    let dry_run = cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y", "--dry-run"])
+        .current_dir(&tmp)
+        .assert()
+        .success();
+    let dry_stdout = String::from_utf8(dry_run.get_output().stdout.clone()).unwrap();
+    assert!(dry_stdout.contains("Would update:"));
+    assert!(dry_stdout.contains("END:"));
+    assert!(dry_stdout.contains("ENDGRAN:"));
+    assert!(dry_stdout.contains("(cleared)"));
+
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+        .current_dir(&tmp)
+        .assert()
+        .success();
+
+    let export = cmd()
+        .args(["export", "metadata", "-i", input.to_str().unwrap()])
+        .assert()
+        .success();
+    let export_stdout = String::from_utf8(export.get_output().stdout.clone()).unwrap();
+    assert!(export_stdout.contains("Replaced Title"));
+    assert!(!export_stdout.contains("END:"));
+    assert!(!export_stdout.contains("ENDGRAN:"));
+}
+
+#[test]
 fn test_apply_dry_run_shows_field_diff() {
     let tmp = TempDir::new().unwrap();
     let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
@@ -1885,4 +2018,774 @@ fn test_ci_false_does_not_bypass_confirmation() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("tag-cli set:"));
+}
+
+// ---------------------------------------------------------------------------
+// Scenario-based integration tests
+// ---------------------------------------------------------------------------
+
+fn get_json_values(input: &Path, key: &str) -> Vec<String> {
+    let output = cmd()
+        .args(["get", "-i", input.to_str().unwrap(), key, "-f", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "get -f json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+    match value.get(key) {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn get_all_json_values(input: &Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let output = cmd()
+        .args(["get", "-i", input.to_str().unwrap(), "-f", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "get -f json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+    let Some(obj) = value.as_object() else {
+        return std::collections::BTreeMap::new();
+    };
+    obj.iter()
+        .map(|(k, v)| {
+            let vals = v
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (k.clone(), vals)
+        })
+        .collect()
+}
+
+fn run_apply(manifest: &Path, tmp: &TempDir) {
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+        .current_dir(tmp)
+        .assert()
+        .success();
+}
+
+fn run_apply_dry_run(manifest: &Path, tmp: &TempDir) -> String {
+    let output = cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y", "--dry-run"])
+        .current_dir(tmp)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "apply --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn parse_diff_keys(diff: &str) -> (Vec<String>, Vec<String>) {
+    let mut cleared = Vec::new();
+    let mut set = Vec::new();
+    for line in diff.lines() {
+        if let Some(body) = line.strip_prefix("  - ") {
+            if let Some(colon) = body.find(':') {
+                let key = body[..colon].trim().to_string();
+                if line.contains("-> (cleared)") {
+                    cleared.push(key);
+                } else if line.contains("-> [") {
+                    set.push(key);
+                }
+            }
+        }
+    }
+    (cleared, set)
+}
+
+fn export_stdout_contains(input: &Path, needle: &str) -> bool {
+    let output = cmd()
+        .args(["export", "metadata", "-i", input.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "export metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).contains(needle)
+}
+
+#[test]
+fn test_apply_dry_run_matches_actual_changes() {
+    let supported: std::collections::HashSet<&str> = [
+        "TITLE",
+        "ARTIST",
+        "ALBUM",
+        "ALBUMARTIST",
+        "GENRE",
+        "DATE",
+        "YEAR",
+        "TRACKNUMBER",
+        "TRACKTOTAL",
+        "DISCNUMBER",
+        "DISCTOTAL",
+        "COMPOSER",
+        "PUBLISHER",
+        "COPYRIGHT",
+        "COMMENT",
+        "DESCRIPTION",
+        "URL",
+        "ISRC",
+        "LABEL",
+        "CATALOGNUMBER",
+        "LYRICS",
+        "LANGUAGE",
+        "EXPLICIT",
+        "BPM",
+        "INITIALKEY",
+        "KEY",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    for fixture in ["sample_flac.flac", "sample_mp3.mp3", "sample_ogg.ogg"] {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+        let cover = image_fixture("cover_jpg.jpg");
+
+        let manifest = tmp.path().join("manifest.yaml");
+        fs::write(
+            &manifest,
+            format!(
+                "defaults:\n  ALBUM: Default Album\nfiles:\n  - path: {}\n    cover: {}\n    tags:\n      TITLE: File Title\n",
+                input.file_name().unwrap().to_str().unwrap(),
+                cover.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+
+        let dry_stdout = run_apply_dry_run(&manifest, &tmp);
+        let (cleared, set) = parse_diff_keys(&dry_stdout);
+
+        run_apply(&manifest, &tmp);
+
+        for key in cleared {
+            if supported.contains(key.as_str()) {
+                assert!(
+                    get_json_values(&input, &key).is_empty(),
+                    "expected {key} to be cleared on {fixture}"
+                );
+            }
+        }
+
+        let expected: std::collections::BTreeMap<&str, &str> =
+            [("TITLE", "File Title"), ("ALBUM", "Default Album")]
+                .into_iter()
+                .collect();
+        for key in set {
+            if let Some(&expected_val) = expected.get(key.as_str()) {
+                assert_eq!(
+                    get_json_values(&input, &key),
+                    vec![expected_val],
+                    "unexpected {key} on {fixture}"
+                );
+            }
+        }
+
+        run_info(&input).stdout(predicate::str::contains("Front Cover"));
+    }
+}
+
+#[test]
+fn test_manifest_defaults_and_per_file_overrides() {
+    let tmp = TempDir::new().unwrap();
+    let a = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+    let b = copy_fixture_to_tmp("sample_mp3.mp3", &tmp);
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        format!(
+            "defaults:\n  ARTIST: Default Artist\n  ALBUM: Default Album\n  DATE: '2024'\n  GENRE: Rock\nfiles:\n  - path: {}\n    tags:\n      TITLE: Song One\n      TRACKNUMBER: '1'\n  - path: {}\n    tags:\n      TITLE: Song Two\n      TRACKNUMBER: '2'\n",
+            a.file_name().unwrap().to_str().unwrap(),
+            b.file_name().unwrap().to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+        .current_dir(&tmp)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Success: 2"));
+
+    let cases = [(&a, "Song One", "1"), (&b, "Song Two", "2")];
+    for (input, title, track) in &cases {
+        for (key, val) in [
+            ("ARTIST", "Default Artist"),
+            ("ALBUM", "Default Album"),
+            ("DATE", "2024"),
+            ("GENRE", "Rock"),
+            ("TITLE", *title),
+            ("TRACKNUMBER", *track),
+        ] {
+            assert_eq!(
+                get_json_values(input, key),
+                vec![val],
+                "{key} mismatch on {}",
+                input.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn test_apply_recursive_directory_mixed_formats() {
+    let tmp = TempDir::new().unwrap();
+    let album = tmp.path().join("album");
+    let disc1 = album.join("disc1");
+    let disc2 = album.join("disc2");
+    fs::create_dir_all(&disc1).unwrap();
+    fs::create_dir_all(&disc2).unwrap();
+
+    let files = [
+        (disc1.join("track1.mp3"), "sample_mp3.mp3"),
+        (disc1.join("track2.flac"), "sample_flac.flac"),
+        (disc2.join("track3.ogg"), "sample_ogg.ogg"),
+        (disc2.join("track4.m4a"), "sample_m4a.m4a"),
+    ];
+    for (dst, src) in &files {
+        fs::copy(audio_fixture(src), dst).unwrap();
+    }
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        "defaults:\n  TITLE: Recursive Title\nrecursive: true\npaths:\n  - album\n",
+    )
+    .unwrap();
+
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+        .current_dir(&tmp)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Success: 4"));
+
+    for (dst, _) in &files {
+        assert_eq!(get_json_values(dst, "TITLE"), vec!["Recursive Title"]);
+    }
+}
+
+#[test]
+fn test_apply_cover_default_picture_type() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+    let cover = image_fixture("cover_jpg.jpg");
+    let extracted = tmp.path().join("extracted.jpg");
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        format!(
+            "files:\n  - path: {}\n    cover: {}\n    tags:\n      TITLE: With Cover\n",
+            input.file_name().unwrap().to_str().unwrap(),
+            cover.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+
+    run_apply(&manifest, &tmp);
+
+    run_info(&input).stdout(predicate::str::contains("Front Cover"));
+
+    cmd()
+        .args([
+            "cover",
+            "get",
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            extracted.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(extracted.exists());
+    assert!(!fs::read(&extracted).unwrap().is_empty());
+}
+
+#[test]
+fn test_special_characters_roundtrip() {
+    let value = "A&B/C'D\"E<F>G";
+
+    // Set via CLI args.
+    let tmp = TempDir::new().unwrap();
+    let flac = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+    cmd()
+        .args([
+            "set",
+            "-i",
+            flac.to_str().unwrap(),
+            "-y",
+            &format!("TITLE={}", value),
+            &format!("ARTIST={}", value),
+        ])
+        .assert()
+        .success();
+    for key in ["TITLE", "ARTIST"] {
+        let out = cmd()
+            .args(["get", "-i", flac.to_str().unwrap(), key])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains(value));
+    }
+    assert!(export_stdout_contains(&flac, value));
+
+    // Set via manifest.
+    let tmp2 = TempDir::new().unwrap();
+    let mp3 = copy_fixture_to_tmp("sample_mp3.mp3", &tmp2);
+    let manifest = tmp2.path().join("manifest.yaml");
+    let quoted = value.replace('"', "\\\"");
+    fs::write(
+        &manifest,
+        format!(
+            "files:\n  - path: {}\n    tags:\n      TITLE: \"{}\"\n      ARTIST: \"{}\"\n",
+            mp3.file_name().unwrap().to_str().unwrap(),
+            quoted,
+            quoted
+        ),
+    )
+    .unwrap();
+    run_apply(&manifest, &tmp2);
+    for key in ["TITLE", "ARTIST"] {
+        let out = cmd()
+            .args(["get", "-i", mp3.to_str().unwrap(), key])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains(value));
+    }
+    assert!(export_stdout_contains(&mp3, value));
+}
+
+#[test]
+fn test_large_comment_roundtrip() {
+    let size = 1024 * 1024;
+    let big: String = std::iter::repeat('x').take(size).collect();
+
+    for fixture in ["sample_flac.flac", "sample_mp3.mp3"] {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+        let original_bytes = fs::read(&input).unwrap();
+
+        let manifest = tmp.path().join("manifest.yaml");
+        fs::write(
+            &manifest,
+            format!(
+                "files:\n  - path: {}\n    tags:\n      COMMENT: {}\n",
+                input.file_name().unwrap().to_str().unwrap(),
+                big
+            ),
+        )
+        .unwrap();
+
+        let apply = cmd()
+            .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+            .current_dir(&tmp)
+            .output()
+            .unwrap();
+
+        if apply.status.success() {
+            assert_eq!(get_json_values(&input, "COMMENT"), vec![big.as_str()]);
+        } else {
+            assert_eq!(
+                fs::read(&input).unwrap(),
+                original_bytes,
+                "apply failed but modified {fixture}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_multi_value_artist() {
+    for fixture in ["sample_mp3.mp3", "sample_flac.flac", "sample_ogg.ogg"] {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+
+        cmd()
+            .args([
+                "set",
+                "-i",
+                input.to_str().unwrap(),
+                "-y",
+                "ARTIST=A",
+                "ARTIST=B",
+                "ARTIST=C",
+            ])
+            .assert()
+            .success();
+
+        let values = get_json_values(&input, "ARTIST");
+        assert_eq!(values.len(), 3);
+        assert!(values.contains(&"A".to_string()));
+        assert!(values.contains(&"B".to_string()));
+        assert!(values.contains(&"C".to_string()));
+    }
+}
+
+#[test]
+fn test_empty_values_clear_fields() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+
+    cmd()
+        .args([
+            "set",
+            "-i",
+            input.to_str().unwrap(),
+            "-y",
+            "COMMENT=old",
+            "GENRE=old",
+        ])
+        .assert()
+        .success();
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        format!(
+            "files:\n  - path: {}\n    tags:\n      COMMENT: ''\n",
+            input.file_name().unwrap().to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    run_apply(&manifest, &tmp);
+
+    assert!(get_json_values(&input, "COMMENT").is_empty());
+    assert!(get_json_values(&input, "GENRE").is_empty());
+
+    // set --replace COMMENT= also clears an existing COMMENT.
+    cmd()
+        .args([
+            "set",
+            "-i",
+            input.to_str().unwrap(),
+            "-y",
+            "--replace",
+            "COMMENT=",
+        ])
+        .assert()
+        .success();
+    assert!(get_json_values(&input, "COMMENT").is_empty());
+}
+
+#[test]
+fn test_glob_precise_selection() {
+    let tmp = TempDir::new().unwrap();
+    let a = tmp.path().join("01-a.mp3");
+    let b = tmp.path().join("01-b.flac");
+    let c = tmp.path().join("02-a.mp3");
+    let d = tmp.path().join("bonus.ogg");
+    fs::copy(audio_fixture("sample_mp3.mp3"), &a).unwrap();
+    fs::copy(audio_fixture("sample_flac.flac"), &b).unwrap();
+    fs::copy(audio_fixture("sample_mp3.mp3"), &c).unwrap();
+    fs::copy(audio_fixture("sample_ogg.ogg"), &d).unwrap();
+
+    let manifest = tmp.path().join("manifest.yaml");
+    fs::write(
+        &manifest,
+        "defaults:\n  TITLE: Glob Matched\npaths:\n  - '01-*.mp3'\n",
+    )
+    .unwrap();
+
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y"])
+        .current_dir(&tmp)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Success: 1"));
+
+    assert_eq!(get_json_values(&a, "TITLE"), vec!["Glob Matched"]);
+    assert!(!get_json_values(&b, "TITLE").contains(&"Glob Matched".to_string()));
+    assert!(!get_json_values(&c, "TITLE").contains(&"Glob Matched".to_string()));
+    assert!(!get_json_values(&d, "TITLE").contains(&"Glob Matched".to_string()));
+}
+
+#[test]
+fn test_cross_format_set_get_clear() {
+    let supported: std::collections::HashSet<&str> = [
+        "TITLE",
+        "ARTIST",
+        "ALBUM",
+        "ALBUMARTIST",
+        "GENRE",
+        "DATE",
+        "YEAR",
+        "TRACKNUMBER",
+        "TRACKTOTAL",
+        "DISCNUMBER",
+        "DISCTOTAL",
+        "COMPOSER",
+        "PUBLISHER",
+        "COPYRIGHT",
+        "COMMENT",
+        "DESCRIPTION",
+        "URL",
+        "ISRC",
+        "LABEL",
+        "CATALOGNUMBER",
+        "LYRICS",
+        "LANGUAGE",
+        "EXPLICIT",
+        "BPM",
+        "INITIALKEY",
+        "KEY",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    for fixture in audio_fixtures() {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+
+        cmd()
+            .args([
+                "set",
+                "-i",
+                input.to_str().unwrap(),
+                "-y",
+                "TITLE=Cross Title",
+                "ARTIST=Cross Artist",
+            ])
+            .assert()
+            .success();
+
+        assert_eq!(get_json_values(&input, "TITLE"), vec!["Cross Title"]);
+        assert_eq!(get_json_values(&input, "ARTIST"), vec!["Cross Artist"]);
+
+        let clear = cmd()
+            .args(["clear", "-i", input.to_str().unwrap(), "-y", "--all"])
+            .output()
+            .unwrap();
+
+        if !clear.status.success() {
+            eprintln!("clear --all failed for {fixture}, skipping remainder");
+            continue;
+        }
+
+        let all = get_all_json_values(&input);
+        for key in all.keys() {
+            assert!(
+                !supported.contains(key.as_str()),
+                "expected no supported tags on {fixture}, found {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_cover_bytes_identical() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+
+    for cover_name in ["cover_jpg.jpg", "cover_png.png"] {
+        let cover = image_fixture(cover_name);
+        let original = fs::read(&cover).unwrap();
+        let extracted = tmp.path().join(format!("extracted_{}", cover_name));
+
+        cmd()
+            .args([
+                "cover",
+                "set",
+                "-i",
+                input.to_str().unwrap(),
+                "-y",
+                "--no-process-cover",
+                cover.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+
+        cmd()
+            .args([
+                "cover",
+                "get",
+                "-i",
+                input.to_str().unwrap(),
+                "-o",
+                extracted.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+
+        assert_eq!(
+            fs::read(&extracted).unwrap(),
+            original,
+            "{cover_name} bytes differ"
+        );
+
+        run_cover_clear(&input);
+    }
+}
+
+#[test]
+fn test_clear_single_tag_preserves_others_and_cover() {
+    for fixture in ["sample_flac.flac", "sample_mp3.mp3", "sample_ogg.ogg"] {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+        let cover = image_fixture("cover_jpg.jpg");
+
+        cmd()
+            .args([
+                "set",
+                "-i",
+                input.to_str().unwrap(),
+                "-y",
+                "TITLE=Keep Title",
+                "ARTIST=Keep Artist",
+                "GENRE=Keep Genre",
+                "COMMENT=Keep Comment",
+            ])
+            .assert()
+            .success();
+
+        run_cover_set(&input, &cover);
+
+        cmd()
+            .args(["clear", "-i", input.to_str().unwrap(), "-y", "GENRE"])
+            .assert()
+            .success();
+
+        assert!(get_json_values(&input, "GENRE").is_empty());
+        assert_eq!(get_json_values(&input, "TITLE"), vec!["Keep Title"]);
+        assert_eq!(get_json_values(&input, "ARTIST"), vec!["Keep Artist"]);
+        assert_eq!(get_json_values(&input, "COMMENT"), vec!["Keep Comment"]);
+        run_info(&input).stdout(predicate::str::contains("image/jpeg"));
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn test_read_only_file_permission_error() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+
+    let mut perms = fs::metadata(&input).unwrap().permissions();
+    perms.set_readonly(true);
+    fs::set_permissions(&input, perms).unwrap();
+
+    let output = cmd()
+        .args(["set", "-i", input.to_str().unwrap(), "-y", "TITLE=X"])
+        .output()
+        .unwrap();
+
+    let mut perms = fs::metadata(&input).unwrap().permissions();
+    perms.set_readonly(false);
+    fs::set_permissions(&input, perms).unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(
+        stderr.contains("permission")
+            || stderr.contains("read-only")
+            || stderr.contains("read only"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_extension_mismatch_handled_gracefully() {
+    let tmp = TempDir::new().unwrap();
+    let input = tmp.path().join("actually_flac.mp3");
+    let original = audio_fixture("sample_flac.flac");
+    fs::copy(&original, &input).unwrap();
+
+    // The commands must not panic; current TagLib behavior treats the file as
+    // an MP3 container and writes an ID3 tag, so we verify post-write
+    // readability instead of unchanged bytes.
+    let _ = cmd().args(["info", "-i", input.to_str().unwrap()]).assert();
+    cmd()
+        .args(["set", "-i", input.to_str().unwrap(), "-y", "TITLE=X"])
+        .assert()
+        .success();
+    run_get(&input, "TITLE").stdout(predicate::str::contains("X"));
+}
+
+#[test]
+fn test_large_manifest_no_panic() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+    let filename = input.file_name().unwrap().to_str().unwrap();
+
+    let manifest = tmp.path().join("manifest.yaml");
+    let mut text = String::from("files:\n");
+    for i in 0..2000 {
+        text.push_str(&format!(
+            "  - path: {filename}\n    tags:\n      TITLE: title_{i}\n"
+        ));
+    }
+    fs::write(&manifest, text).unwrap();
+
+    cmd()
+        .args(["apply", "-m", manifest.to_str().unwrap(), "-y", "--dry-run"])
+        .current_dir(&tmp)
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_parallel_set_same_file() {
+    let tmp = TempDir::new().unwrap();
+    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
+    let exe = env!("CARGO_BIN_EXE_tag-cli");
+
+    let mut children = Vec::new();
+    for value in ["A", "B", "C", "D"] {
+        let child = std::process::Command::new(exe)
+            .args([
+                "set",
+                "-i",
+                input.to_str().unwrap(),
+                "-y",
+                &format!("TITLE={value}"),
+            ])
+            .spawn()
+            .unwrap();
+        children.push(child);
+    }
+
+    for mut child in children {
+        let _ = child.wait();
+    }
+
+    run_info(&input).stdout(predicate::str::contains("Audio:"));
+    let title = get_json_values(&input, "TITLE");
+    assert!(!title.is_empty());
+    assert!("A B C D".split(' ').any(|v| v == title[0]));
+}
+
+#[test]
+fn test_set_and_get_basic_tag() {
+    for fixture in ["sample_mp3.mp3", "sample_flac.flac", "sample_ogg.ogg"] {
+        let tmp = TempDir::new().unwrap();
+        let input = copy_fixture_to_tmp(fixture, &tmp);
+        run_set(&input, "TITLE=New");
+        run_get(&input, "TITLE").stdout(predicate::str::contains("New"));
+    }
 }

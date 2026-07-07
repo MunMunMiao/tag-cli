@@ -32,7 +32,6 @@ impl Workflow {
 mod tests {
     use super::*;
     use crate::error::TagCliError;
-    use crate::workflow::step::StepOutcome;
 
     #[derive(Debug)]
     struct NameStep(&'static str);
@@ -42,8 +41,8 @@ mod tests {
             self.0
         }
 
-        fn execute(&self, _ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
-            Ok(StepOutcome::Continue)
+        fn execute(&self, _ctx: &mut Context) -> Result<(), TagCliError> {
+            Ok(())
         }
     }
 
@@ -55,7 +54,7 @@ mod tests {
             "ErrorStep"
         }
 
-        fn execute(&self, _ctx: &mut Context) -> Result<StepOutcome, TagCliError> {
+        fn execute(&self, _ctx: &mut Context) -> Result<(), TagCliError> {
             Err(TagCliError::InPlaceNotConfirmed {
                 command: "test".to_string(),
             })

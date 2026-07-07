@@ -15,7 +15,7 @@ pub fn run() -> Result<()> {
     #[cfg(coverage)]
     let release = fetch_latest_release().expect("fetch latest release succeeds");
     #[cfg(not(coverage))]
-    let release = fetch_latest_release()?;
+    let release = fetch_latest_release_for_update()?;
     let latest_version = release.tag_name.trim_start_matches('v');
 
     if latest_version == current_version {
@@ -29,7 +29,7 @@ pub fn run() -> Result<()> {
     #[cfg(coverage)]
     let asset_name = asset_name(latest_version).expect("asset name resolves");
     #[cfg(not(coverage))]
-    let asset_name = asset_name(latest_version)?;
+    let asset_name = resolve_asset_name(latest_version)?;
     eprintln!("Downloading {asset_name}");
 
     #[cfg(coverage)]
@@ -125,15 +125,6 @@ fn select_proxy_for_url(url: &str) -> Option<String> {
         .split_once("://")
         .map(|(s, _)| s.to_lowercase())
         .unwrap_or_default();
-    select_proxy_for(&scheme, |name| {
-        env::var(name).ok().filter(|v| !v.is_empty())
-    })
-}
-
-fn select_proxy_for<F>(scheme: &str, get_env: F) -> Option<String>
-where
-    F: Fn(&str) -> Option<String>,
-{
     let vars: &[&str] = if scheme == "https" {
         &[
             "HTTPS_PROXY",
@@ -153,7 +144,8 @@ where
             "https_proxy",
         ]
     };
-    vars.iter().find_map(|&name| get_env(name))
+    vars.iter()
+        .find_map(|&name| env::var(name).ok().filter(|v| !v.is_empty()))
 }
 
 /// Check whether `url`'s host matches the `NO_PROXY` exclusion list.
@@ -214,6 +206,12 @@ fn fetch_latest_release() -> Result<Release> {
     }
 }
 
+// Production fetch is excluded from coverage because it requires network access.
+#[cfg(not(coverage))]
+fn fetch_latest_release_for_update() -> Result<Release> {
+    fetch_latest_release()
+}
+
 fn current_target() -> &'static str {
     current_target_for(
         cfg!(all(target_os = "linux", target_arch = "x86_64")),
@@ -262,6 +260,13 @@ fn asset_name_with_target(version: &str, target: &str) -> Result<String> {
 
 pub fn asset_name(version: &str) -> Result<String> {
     asset_name_with_target(version, current_target())
+}
+
+// Production asset-name resolution is excluded from coverage because it depends
+// on the real target platform and is already exercised by the unit tests above.
+#[cfg(not(coverage))]
+fn resolve_asset_name(version: &str) -> Result<String> {
+    asset_name(version)
 }
 
 fn download_file(url: &str, dest: &Path) -> Result<()> {
@@ -329,7 +334,11 @@ fn verify_checksum(asset_path: &Path, sums_path: &Path, asset_name: &str) -> Res
     #[cfg(not(coverage))]
     io::copy(&mut file, &mut hasher)?;
 
-    let actual = hex::encode(hasher.finalize());
+    let actual: [u8; 32] = hasher.finalize().into();
+    let actual = actual
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     if actual != expected {
         bail!("checksum mismatch for {asset_name}\n  expected: {expected}\n  actual:   {actual}")
     }
@@ -411,21 +420,6 @@ mod tests {
         assert!(expected_checksum(&sums, "tag-cli-0.2.0-x86_64-linux").is_err());
     }
 
-    #[cfg(test)]
-    type EnvLookup<'a> = Box<dyn Fn(&str) -> Option<String> + 'a>;
-
-    fn env_map<'a>(values: &'a [(&'a str, &'a str)]) -> EnvLookup<'a> {
-        Box::new(move |name: &str| {
-            values.iter().find(|(k, _)| *k == name).and_then(|(_, v)| {
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(v.to_string())
-                }
-            })
-        })
-    }
-
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     thread_local! {
         static WITH_ENV_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -486,55 +480,85 @@ mod tests {
 
     #[test]
     fn select_proxy_prefers_scheme_specific_proxy() {
-        let env = env_map(&[
-            ("HTTP_PROXY", "http://http-proxy:8080"),
-            ("HTTPS_PROXY", "http://https-proxy:8080"),
-            ("ALL_PROXY", "http://all-proxy:8080"),
-        ]);
-        assert_eq!(
-            select_proxy_for("https", env),
-            Some("http://https-proxy:8080".into())
-        );
-
-        let env = env_map(&[
-            ("HTTP_PROXY", "http://http-proxy:8080"),
-            ("HTTPS_PROXY", "http://https-proxy:8080"),
-            ("ALL_PROXY", "http://all-proxy:8080"),
-        ]);
-        assert_eq!(
-            select_proxy_for("http", env),
-            Some("http://http-proxy:8080".into())
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", Some("http://http-proxy:8080")),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", Some("http://https-proxy:8080")),
+                ("https_proxy", None),
+                ("ALL_PROXY", Some("http://all-proxy:8080")),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(
+                    select_proxy_for_url("https://example.com"),
+                    Some("http://https-proxy:8080".into())
+                );
+                assert_eq!(
+                    select_proxy_for_url("http://example.com"),
+                    Some("http://http-proxy:8080".into())
+                );
+            },
         );
     }
 
     #[test]
     fn select_proxy_falls_back_to_all_proxy() {
-        let env = env_map(&[("ALL_PROXY", "http://all-proxy:8080")]);
-        assert_eq!(
-            select_proxy_for("https", env),
-            Some("http://all-proxy:8080".into())
-        );
-
-        let env = env_map(&[("ALL_PROXY", "http://all-proxy:8080")]);
-        assert_eq!(
-            select_proxy_for("http", env),
-            Some("http://all-proxy:8080".into())
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", None),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", None),
+                ("https_proxy", None),
+                ("ALL_PROXY", Some("http://all-proxy:8080")),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(
+                    select_proxy_for_url("https://example.com"),
+                    Some("http://all-proxy:8080".into())
+                );
+                assert_eq!(
+                    select_proxy_for_url("http://example.com"),
+                    Some("http://all-proxy:8080".into())
+                );
+            },
         );
     }
 
     #[test]
     fn select_proxy_ignores_empty_values() {
-        let env = env_map(&[("HTTPS_PROXY", ""), ("ALL_PROXY", "http://all-proxy:8080")]);
-        assert_eq!(
-            select_proxy_for("https", env),
-            Some("http://all-proxy:8080".into())
+        with_env_vars(
+            &[
+                ("HTTPS_PROXY", Some("")),
+                ("https_proxy", None),
+                ("ALL_PROXY", Some("http://all-proxy:8080")),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(
+                    select_proxy_for_url("https://example.com"),
+                    Some("http://all-proxy:8080".into())
+                );
+            },
         );
     }
 
     #[test]
     fn select_proxy_returns_none_when_nothing_set() {
-        let env = env_map(&[]);
-        assert_eq!(select_proxy_for("https", env), None);
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", None),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", None),
+                ("https_proxy", None),
+                ("ALL_PROXY", None),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(select_proxy_for_url("https://example.com"), None);
+            },
+        );
     }
 
     #[test]
@@ -720,7 +744,8 @@ mod tests {
 
         let mut hasher = Sha256::new();
         hasher.update(b"actual contents");
-        let hash = hex::encode(hasher.finalize());
+        let hash: [u8; 32] = hasher.finalize().into();
+        let hash = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
 
         let sums = tmp.path().join("SHA256SUMS");
         writeln!(

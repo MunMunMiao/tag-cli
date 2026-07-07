@@ -14,15 +14,23 @@ enum OutputMode {
     SidecarDirectory(PathBuf),
 }
 
+#[cfg(coverage)]
+fn resolve_base_dir() -> Result<PathBuf, TagCliError> {
+    Ok(std::env::current_dir().expect("current_dir succeeds"))
+}
+
+#[cfg(not(coverage))]
+fn resolve_base_dir() -> Result<PathBuf, TagCliError> {
+    // Defensive path: only reachable if the OS cannot report the current directory.
+    std::env::current_dir().map_err(TagCliError::Io)
+}
+
 pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> {
-    #[cfg(coverage)]
-    let base_dir = std::env::current_dir().expect("current_dir succeeds");
-    #[cfg(not(coverage))]
-    let base_dir = std::env::current_dir().map_err(TagCliError::Io)?;
+    let base_dir = resolve_base_dir()?;
     let files = expand_patterns(&args.input, &base_dir)?;
 
     if files.is_empty() {
-        crate::report::status("Warning: no files matched the given patterns");
+        crate::commands::status("Warning: no files matched the given patterns");
     }
 
     let mode = resolve_output_mode(args)?;
@@ -34,7 +42,7 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
 
     for path in &files {
         if verbose {
-            crate::report::status(format!("Reading {}", path.display()));
+            crate::commands::status(format!("Reading {}", path.display()));
         }
 
         match read_one_file(path, &base_dir, args.absolute_paths) {
@@ -75,7 +83,7 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
 
     write_manifest(&manifest, &mode, crate::cli::Cli::is_confirmed(args.yes))?;
 
-    crate::report::status(format!(
+    crate::commands::status(format!(
         "Success: {}, Skipped: {}, Failures: {}",
         succeeded,
         skipped,
@@ -114,15 +122,15 @@ fn resolve_output_mode(args: &ExportMetadataArgs) -> Result<OutputMode, TagCliEr
     }
 }
 
+#[cfg(coverage)]
 fn io_result<T>(result: std::io::Result<T>) -> Result<T, TagCliError> {
-    #[cfg(coverage)]
-    {
-        Ok(result.expect("IO operation succeeds"))
-    }
-    #[cfg(not(coverage))]
-    {
-        result.map_err(TagCliError::Io)
-    }
+    Ok(result.expect("IO operation succeeds"))
+}
+
+#[cfg(not(coverage))]
+fn io_result<T>(result: std::io::Result<T>) -> Result<T, TagCliError> {
+    // Defensive path: only reachable on OS-level IO failures.
+    result.map_err(TagCliError::Io)
 }
 
 fn ensure_directory(path: &Path, description: &str) -> Result<(), TagCliError> {
@@ -157,6 +165,21 @@ fn is_known_audio_format(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(coverage)]
+fn relative_path_or_fallback(path: &Path, base_dir: &Path, _fallback: String) -> String {
+    pathdiff::diff_paths(path, base_dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .expect("pathdiff succeeds")
+}
+
+#[cfg(not(coverage))]
+fn relative_path_or_fallback(path: &Path, base_dir: &Path, fallback: String) -> String {
+    // Defensive fallback for uncommon pathdiff failures.
+    pathdiff::diff_paths(path, base_dir)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| fallback)
+}
+
 fn read_one_file(
     path: &Path,
     base_dir: &Path,
@@ -174,7 +197,7 @@ fn read_one_file(
                     "Could not read audio properties".to_string(),
                 ));
             }
-            crate::report::status(format!("Skipping {}: unsupported format", path.display()));
+            crate::commands::status(format!("Skipping {}: unsupported format", path.display()));
             return Ok(None); // unsupported format -> skip
         }
         Err(e) => {
@@ -188,14 +211,7 @@ fn read_one_file(
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
-    #[cfg(coverage)]
-    let relative_path = pathdiff::diff_paths(path, base_dir)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap();
-    #[cfg(not(coverage))]
-    let relative_path = pathdiff::diff_paths(path, base_dir)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| file_path.clone());
+    let relative_path = relative_path_or_fallback(path, base_dir, file_path.clone());
     let file_format = path
         .extension()
         .and_then(|e| e.to_str())
@@ -229,18 +245,7 @@ fn path_to_string(path: &Path, base_dir: &Path, absolute_paths: bool) -> String 
             .to_string_lossy()
             .to_string()
     } else {
-        #[cfg(coverage)]
-        {
-            pathdiff::diff_paths(path, base_dir)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap()
-        }
-        #[cfg(not(coverage))]
-        {
-            pathdiff::diff_paths(path, base_dir)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string_lossy().to_string())
-        }
+        relative_path_or_fallback(path, base_dir, path.to_string_lossy().to_string())
     }
 }
 
@@ -457,19 +462,19 @@ fn manifest_directory(mode: &OutputMode, base_dir: &Path) -> PathBuf {
     }
 }
 
+#[cfg(coverage)]
 fn serialize_manifest(manifest: &Manifest) -> Result<String, TagCliError> {
-    #[cfg(coverage)]
-    {
-        Ok(serde_yaml::to_string(manifest).expect("manifest serializes to YAML"))
-    }
-    #[cfg(not(coverage))]
-    {
-        serde_yaml::to_string(manifest).map_err(|e| {
-            TagCliError::Io(std::io::Error::other(format!(
-                "YAML serialization failed: {e}"
-            )))
-        })
-    }
+    Ok(serde_yaml::to_string(manifest).expect("manifest serializes to YAML"))
+}
+
+#[cfg(not(coverage))]
+fn serialize_manifest(manifest: &Manifest) -> Result<String, TagCliError> {
+    // Defensive path: serde_yaml should never fail for this type.
+    serde_yaml::to_string(manifest).map_err(|e| {
+        TagCliError::Io(std::io::Error::other(format!(
+            "YAML serialization failed: {e}"
+        )))
+    })
 }
 
 fn write_manifest(
@@ -487,7 +492,7 @@ fn write_manifest(
         OutputMode::AggregateFile(path) => {
             check_overwrite(path, confirmed)?;
             io_result(std::fs::write(path, yaml))?;
-            crate::report::status(format!("Wrote {}", path.display()));
+            crate::commands::status(format!("Wrote {}", path.display()));
             Ok(())
         }
         OutputMode::SidecarDirectory(dir) => {
@@ -511,7 +516,7 @@ fn write_manifest(
                 let content = serialize_manifest(&single)?;
                 io_result(std::fs::write(&out_path, content))?;
             }
-            crate::report::status(format!(
+            crate::commands::status(format!(
                 "Wrote {} sidecar files to {}",
                 manifest.files.len(),
                 dir.display()
