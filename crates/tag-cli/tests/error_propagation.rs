@@ -33,20 +33,6 @@ fn assert_file_unchanged(path: &Path, expected: &[u8]) {
     assert_eq!(actual, expected, "{path:?} was unexpectedly modified",);
 }
 
-fn with_ci_false<F: FnOnce()>(f: F) {
-    let old_ci = std::env::var("CI").ok();
-    unsafe {
-        std::env::set_var("CI", "false");
-    }
-    f();
-    unsafe {
-        match old_ci {
-            Some(v) => std::env::set_var("CI", v),
-            None => std::env::remove_var("CI"),
-        }
-    }
-}
-
 #[test]
 fn run_with_propagates_export_metadata_overwrite_error() {
     let tmp = TempDir::new().unwrap();
@@ -65,13 +51,11 @@ fn run_with_propagates_export_metadata_overwrite_error() {
     ]);
 
     let mut stdout = Vec::new();
-    with_ci_false(|| {
-        let result = tag_cli::run_with(cli, &mut stdout);
-        assert!(
-            result.is_err(),
-            "expected export metadata to fail when output file exists without -y"
-        );
-    });
+    let result = tag_cli::run_with(cli, &mut stdout);
+    assert!(
+        result.is_err(),
+        "expected export metadata to fail when output file exists without -y"
+    );
 }
 
 #[test]
@@ -99,7 +83,6 @@ fn export_metadata_fails_when_output_exists_without_yes() {
             "-o",
             output.to_str().unwrap(),
         ])
-        .env("CI", "false")
         .assert()
         .failure()
         .stderr(predicate::str::contains("output file already exists"));
