@@ -84,18 +84,10 @@ struct Release {
 }
 
 fn api_url() -> String {
-    #[cfg(any(debug_assertions, test, feature = "test-overrides"))]
-    if let Ok(url) = env::var("TAG_CLI_UPDATE_API_URL") {
-        return url;
-    }
     DEFAULT_API_URL.into()
 }
 
 fn download_base() -> String {
-    #[cfg(any(debug_assertions, test, feature = "test-overrides"))]
-    if let Ok(base) = env::var("TAG_CLI_UPDATE_DOWNLOAD_BASE") {
-        return base;
-    }
     DEFAULT_DOWNLOAD_BASE.into()
 }
 
@@ -621,34 +613,20 @@ mod tests {
     }
 
     #[test]
-    fn api_url_uses_environment_override() {
+    fn api_url_ignores_env_override() {
         let result = with_env_vars(
             &[("TAG_CLI_UPDATE_API_URL", Some("http://override/api"))],
             || api_url(),
         );
-        assert_eq!(result, "http://override/api");
-    }
-
-    #[test]
-    fn download_base_uses_environment_override() {
-        let result = with_env_vars(
-            &[("TAG_CLI_UPDATE_DOWNLOAD_BASE", Some("http://override/dl"))],
-            || download_base(),
-        );
-        assert_eq!(result, "http://override/dl");
-    }
-
-    #[test]
-    fn api_url_falls_back_to_default_when_env_unset() {
-        let result = with_env_vars(&[("TAG_CLI_UPDATE_API_URL", None)], || api_url());
         assert_eq!(result, DEFAULT_API_URL);
     }
 
     #[test]
-    fn download_base_falls_back_to_default_when_env_unset() {
-        let result = with_env_vars(&[("TAG_CLI_UPDATE_DOWNLOAD_BASE", None)], || {
-            download_base()
-        });
+    fn download_base_ignores_env_override() {
+        let result = with_env_vars(
+            &[("TAG_CLI_UPDATE_DOWNLOAD_BASE", Some("http://override/dl"))],
+            || download_base(),
+        );
         assert_eq!(result, DEFAULT_DOWNLOAD_BASE);
     }
 
