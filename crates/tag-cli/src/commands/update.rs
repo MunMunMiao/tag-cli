@@ -39,17 +39,18 @@ pub fn run() -> Result<()> {
     let asset_path = tmp_dir.path().join(&asset_name);
     let sums_path = tmp_dir.path().join("SHA256SUMS");
 
-    let base = download_base();
     #[cfg(coverage)]
     {
-        download_file(&join_url(&base, &asset_name), &asset_path).expect("download asset succeeds");
-        download_file(&join_url(&base, "SHA256SUMS"), &sums_path).expect("download sums succeeds");
+        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, &asset_name), &asset_path)
+            .expect("download asset succeeds");
+        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, "SHA256SUMS"), &sums_path)
+            .expect("download sums succeeds");
         verify_checksum(&asset_path, &sums_path, &asset_name).expect("verify checksum succeeds");
     }
     #[cfg(not(coverage))]
     {
-        download_file(&join_url(&base, &asset_name), &asset_path)?;
-        download_file(&join_url(&base, "SHA256SUMS"), &sums_path)?;
+        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, &asset_name), &asset_path)?;
+        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, "SHA256SUMS"), &sums_path)?;
         verify_checksum(&asset_path, &sums_path, &asset_name)?;
     }
 
@@ -81,14 +82,6 @@ fn join_url(base: &str, path: &str) -> String {
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
-}
-
-fn api_url() -> String {
-    DEFAULT_API_URL.into()
-}
-
-fn download_base() -> String {
-    DEFAULT_DOWNLOAD_BASE.into()
 }
 
 /// Build a fresh `ureq::Agent` configured from proxy environment variables.
@@ -172,19 +165,18 @@ fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
 }
 
 fn fetch_latest_release() -> Result<Release> {
-    let url = api_url();
     #[cfg(coverage)]
-    let body = build_agent_for(&url)
+    let body = build_agent_for(DEFAULT_API_URL)
         .expect("build agent succeeds")
-        .get(&url)
+        .get(DEFAULT_API_URL)
         .set("User-Agent", "tag-cli")
         .call()
         .expect("API call succeeds")
         .into_string()
         .expect("read body succeeds");
     #[cfg(not(coverage))]
-    let body = build_agent_for(&url)?
-        .get(&url)
+    let body = build_agent_for(DEFAULT_API_URL)?
+        .get(DEFAULT_API_URL)
         .set("User-Agent", "tag-cli")
         .call()?
         .into_string()?;
@@ -610,24 +602,6 @@ mod tests {
                 .to_string()
                 .contains("invalid proxy URL")
         );
-    }
-
-    #[test]
-    fn api_url_ignores_env_override() {
-        let result = with_env_vars(
-            &[("TAG_CLI_UPDATE_API_URL", Some("http://override/api"))],
-            || api_url(),
-        );
-        assert_eq!(result, DEFAULT_API_URL);
-    }
-
-    #[test]
-    fn download_base_ignores_env_override() {
-        let result = with_env_vars(
-            &[("TAG_CLI_UPDATE_DOWNLOAD_BASE", Some("http://override/dl"))],
-            || download_base(),
-        );
-        assert_eq!(result, DEFAULT_DOWNLOAD_BASE);
     }
 
     #[test]

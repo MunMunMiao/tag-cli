@@ -33,7 +33,7 @@ Common workflows:
   tag-cli export metadata -i \"**/*.mp3\" -o manifest.yaml
 
 Safety:
-  Commands that modify files in place require -y/--yes.
+  Metadata edit commands require -y/--yes before writing in place.
   Use --dry-run first when a command supports it.",
     after_help = "Use \"tag-cli <COMMAND> --help\" for more information about a command.",
     help_template = "{before-help}{about-with-newline}
