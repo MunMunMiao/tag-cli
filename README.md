@@ -34,7 +34,7 @@ Prefer a manual install? Download prebuilt binaries from [GitHub Releases](https
 - **One tool, many formats.** MP3, FLAC, M4A, Ogg Vorbis, Opus, WAV, and more.
 - **Safe by default.** Write commands require confirmation for in-place edits and when overwriting existing output files; most write commands support `--dry-run` preview.
 - **Batch ready.** Apply a YAML manifest to an album or library in one command.
-- **CI friendly.** Machine-readable JSON/YAML output and environment-variable confirmation.
+- **CI friendly.** Machine-readable JSON/YAML output and explicit `-y` confirmation for writes.
 - **Self updating.** `tag-cli update` downloads verified releases and replaces the running binary.
 
 <a id="who-is-this-for"></a>
@@ -125,7 +125,7 @@ $ tag-cli set -i song.mp3 -y TITLE="My Song" ARTIST="Me"
 - Automatic cover processing: scaling, format selection, EXIF/metadata stripping, and size limits.
 - Output formats: human-readable tables, JSON, and YAML for `info`, `get`, and `list-keys`; `export metadata` emits an apply-ready YAML manifest.
 - `--dry-run` preview for all write operations that support it.
-- Environment-variable confirmation for scripting and CI (`TAG_CLI_YES=1` or `CI=true`).
+- Explicit `-y` / `--yes` confirmation for scripting and CI writes.
 
 <a id="prerequisites"></a>
 ## Prerequisites
@@ -272,9 +272,6 @@ The update command honors standard proxy environment variables:
 
 Proxy selection follows the usual scheme-specific priority: `HTTPS_PROXY` for HTTPS URLs, then `ALL_PROXY`, then `HTTP_PROXY`. `NO_PROXY` supports `*` for all hosts, exact hosts, and domain suffixes such as `.example.com`.
 
-> [!NOTE]
-> `TAG_CLI_UPDATE_API_URL` and `TAG_CLI_UPDATE_DOWNLOAD_BASE` can override the GitHub API and download base URLs, but only in debug/test builds or when the `test-overrides` feature is enabled. They are compiled out of release binaries.
-
 <a id="supported-formats"></a>
 ## Supported audio formats and cover image input formats
 
@@ -320,17 +317,11 @@ Embedded covers are ultimately written as **JPEG** or **PNG**. The format is sel
 <a id="global-options"></a>
 ## Global options and safety behavior
 
-### Write confirmation priority
+### Write confirmation
 
-Destructive commands (`set`, `clear`, `cover set`, `cover clear`, `apply`, `export metadata` when writing files) require confirmation. Confirmation sources take priority in this order:
+Destructive commands (`set`, `clear`, `cover set`, `cover clear`, `apply`, `export metadata` when overwriting existing files) require explicit command-line confirmation via `-y` / `--yes`.
 
-| Priority | Source | Description |
-|----------|--------|-------------|
-| 1 | `-y` / `--yes` | Explicit command-line confirmation; highest priority |
-| 2 | `TAG_CLI_YES=1` or `TAG_CLI_YES=true` | User-level environment variable confirmation |
-| 3 | `CI` non-empty and not equal to `false` | CI / automation environment confirmation |
-
-If none of these sources are satisfied, the write command exits with an error and modifies no files.
+If `-y` / `--yes` is not provided, the write command exits with an error and modifies no files.
 
 ### Confirmation by command
 
@@ -600,7 +591,7 @@ tag-cli export metadata -i '*.mp3' -o album.yaml --with-cover --cover-dir ./artw
 > Output directories (such as `sidecars/`) are created automatically if they do not exist.
 
 > [!CAUTION]
-> Writing aggregated manifests or sidecar files overwrites existing output and requires confirmation (`-y`, `TAG_CLI_YES=1`, or `CI=true`). Outputting to stdout does not require confirmation.
+> Writing aggregated manifests or sidecar files overwrites existing output and requires explicit `-y` / `--yes` confirmation. Outputting to stdout does not require confirmation.
 
 Manifest output behavior:
 
@@ -787,7 +778,7 @@ Before using batch or destructive commands such as `apply`, `set`, `clear`, and 
 1. **Back up original files.** tag-cli does not back up automatically and cannot undo writes.
 2. **Test on a small set.** Run `--dry-run` on 1–3 files first and verify the diff.
 3. **Dry-run first, `-y` second.** Always run `--dry-run` first; only add `-y` after confirming the diff. `--dry-run` does not test the write path, so filesystem permissions and read-only files only surface during `-y`.
-4. **Understand confirmation source priority.** Command-line `-y` > `TAG_CLI_YES` > `CI`. In CI, use `--dry-run` as an explicit validation step, then use `TAG_CLI_YES=1` or `-y` for writes.
+4. **Use explicit confirmation for writes.** In CI, use `--dry-run` as an explicit validation step, then pass `-y` for the write step.
 5. **Check manifest paths.** Relative paths are resolved relative to the manifest directory. Nonexistent paths or empty globs silently produce zero matches.
 6. **Validate cover processing.** Verify that `--cover-format`, `--cover-max-size`, and `--cover-max-file-size` meet target platform requirements. PNG size reduction lowers resolution; `--cover-quality` affects only JPEG.
 7. **Watch for sidecar name collisions.** `export metadata --per-file` names files `{file_stem}.metadata.yaml`. Files with the same name overwrite each other.
@@ -824,7 +815,7 @@ if ! tag-cli apply -m "$MANIFEST" --dry-run; then
   exit 1
 fi
 
-# Write for real: explicitly use TAG_CLI_YES=1 instead of relying on implicit CI behavior
+# Write for real: pass -y explicitly after dry-run succeeds
 tag-cli apply -m "$MANIFEST" -y --fail-fast
 ```
 
@@ -872,7 +863,7 @@ $ tag-cli export metadata -i '*.mp3' | yq '.files[] | {path: .path, title: .tags
 
 ### CI workflow best practices
 
-Use `--dry-run` as a separate validation job that fails the pipeline. Use `TAG_CLI_YES=1` explicitly for the write step.
+Use `--dry-run` as a separate validation job that fails the pipeline. Use `-y` explicitly for the write step.
 
 ```yaml
 # .github/workflows/tag-cli.yml example snippet
@@ -891,8 +882,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Apply metadata
         run: tag-cli apply -m album.yaml -y
-        env:
-          TAG_CLI_YES: "1"
 ```
 
 ### Export metadata report in CI
@@ -901,8 +890,6 @@ jobs:
 # .github/workflows/metadata.yml example snippet
 - name: Export metadata manifest
   run: tag-cli export metadata -i 'audio/**/*.mp3' -o metadata-report.yaml -y
-  env:
-    TAG_CLI_YES: "1"
 ```
 
 <a id="exit-codes-and-environment-variables"></a>
@@ -931,26 +918,14 @@ Specific behavior for `apply` and `export metadata`:
 
 ### Environment variables
 
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `TAG_CLI_YES` | `1` or `true` | Treat destructive write operations as confirmed |
-| `CI` | Any non-empty value except `false` | Treat as confirmed in CI/automation environments |
+The update command honors standard proxy environment variables:
 
-### Priority examples
-
-```bash
-# Explicit -y always takes precedence
-$ tag-cli set -i song.mp3 -y TITLE="A"
-
-# Environment variable confirmation
-$ TAG_CLI_YES=1 tag-cli set -i song.mp3 TITLE="A"
-
-# CI environment confirmation (no need to pass -y)
-$ CI=true tag-cli apply -m manifest.yaml
-```
-
-> [!CAUTION]
-> Setting `CI=true` in CI treats all destructive commands in that job as confirmed. Use it only for read-only steps (such as `info` or `export metadata` to stdout) or for write steps that have already passed `--dry-run` validation. For actual write steps, prefer explicit `TAG_CLI_YES=1` or `-y` to clearly express intent.
+| Variable | Purpose |
+|----------|---------|
+| `HTTP_PROXY` / `http_proxy` | Proxy for HTTP requests |
+| `HTTPS_PROXY` / `https_proxy` | Proxy for HTTPS requests |
+| `ALL_PROXY` / `all_proxy` | Fallback proxy for either scheme |
+| `NO_PROXY` / `no_proxy` | Bypass proxy for matching hosts |
 
 <a id="troubleshooting-and-faq"></a>
 ## Troubleshooting / FAQ
@@ -970,7 +945,7 @@ git submodule update --init --recursive
 
 ### Write command reports confirmation required
 
-Write commands require `-y`, `TAG_CLI_YES=1`, or `CI=true`. See [Global options and safety behavior](#global-options).
+Write commands require `-y` / `--yes`. See [Global options and safety behavior](#global-options).
 
 ### Why does a 1-second MP3 show a longer duration?
 
