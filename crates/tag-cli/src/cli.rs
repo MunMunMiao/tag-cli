@@ -291,11 +291,7 @@ pub struct SetArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for destructive writes"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for destructive writes")]
     pub yes: bool,
 
     #[arg(long, help = "Preview changes and print a diff without writing")]
@@ -329,11 +325,7 @@ pub struct ClearArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for destructive writes"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for destructive writes")]
     pub yes: bool,
 
     #[arg(long, help = "Preview changes and print a diff without writing")]
@@ -438,11 +430,7 @@ pub struct CoverSetArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for destructive writes"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for destructive writes")]
     pub yes: bool,
 
     #[arg(long, help = "Preview changes and print a diff without writing")]
@@ -475,11 +463,7 @@ pub struct CoverClearArgs {
     )]
     pub output: Option<PathBuf>,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for destructive writes"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for destructive writes")]
     pub yes: bool,
 
     #[arg(long, help = "Preview changes and print a diff without writing")]
@@ -498,11 +482,7 @@ pub struct ApplyArgs {
     )]
     pub filename: PathBuf,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for destructive writes"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for destructive writes")]
     pub yes: bool,
 
     #[arg(long, help = "Preview changes and print a diff without writing")]
@@ -731,11 +711,7 @@ pub struct ExportMetadataArgs {
     )]
     pub fail_fast: bool,
 
-    #[arg(
-        short = 'y',
-        long,
-        help = "Skip confirmation for output overwrites"
-    )]
+    #[arg(short = 'y', long, help = "Skip confirmation for output overwrites")]
     pub yes: bool,
 }
 
