@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Reached 100% line coverage for the project's core logic by excluding thin orchestration files that contain clap-generated code, network paths, and OS-level error fallbacks from the coverage report.
 
+### Removed
+
+- Removed non-proxy environment variable support: `TAG_CLI_YES`, `CI` write confirmation, `TAG_CLI_UPDATE_API_URL`, and `TAG_CLI_UPDATE_DOWNLOAD_BASE`. Use `-y` / `--yes` for non-interactive writes; standard proxy environment variables remain supported for `tag-cli update`.
+
 ## [0.1.1] - 2026-07-04
 
 ### Changed
