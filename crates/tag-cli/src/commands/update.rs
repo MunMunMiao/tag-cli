@@ -17,7 +17,8 @@ pub fn run() -> Result<()> {
     let release = fetch_latest_release().expect("fetch latest release succeeds");
     #[cfg(not(coverage))]
     let release = fetch_latest_release_for_update()?;
-    let latest_version = release.tag_name.trim_start_matches('v');
+    let latest_tag = release.tag_name.as_str();
+    let latest_version = latest_tag.trim_start_matches('v');
 
     if latest_version == current_version {
         println!("tag-cli {current_version} is already the latest version");
@@ -40,7 +41,7 @@ pub fn run() -> Result<()> {
     let asset_path = tmp_dir.path().join(&asset_name);
     let sums_path = tmp_dir.path().join("SHA256SUMS");
 
-    let download_base = release_download_base(latest_version);
+    let download_base = release_download_base(latest_tag);
 
     #[cfg(coverage)]
     {
@@ -82,9 +83,8 @@ fn join_url(base: &str, path: &str) -> String {
     format!("{base}/{path}")
 }
 
-fn release_download_base(version: &str) -> String {
-    let version = version.strip_prefix('v').unwrap_or(version);
-    join_url(DEFAULT_DOWNLOAD_BASE, &format!("v{version}"))
+fn release_download_base(tag: &str) -> String {
+    join_url(DEFAULT_DOWNLOAD_BASE, tag)
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,28 +114,13 @@ fn build_agent_for(url: &str) -> Result<Agent> {
 
 /// Pick the proxy URL for `url` based on its scheme and standard env var priority.
 fn select_proxy_for_url(url: &str) -> Option<String> {
-    let scheme = url
-        .split_once("://")
-        .map(|(s, _)| s.to_lowercase())
+    let scheme = Url::parse(url)
+        .map(|u| u.scheme().to_string())
         .unwrap_or_default();
     let vars: &[&str] = if scheme == "https" {
-        &[
-            "HTTPS_PROXY",
-            "https_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-            "HTTP_PROXY",
-            "http_proxy",
-        ]
+        &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
     } else {
-        &[
-            "HTTP_PROXY",
-            "http_proxy",
-            "ALL_PROXY",
-            "all_proxy",
-            "HTTPS_PROXY",
-            "https_proxy",
-        ]
+        &["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
     };
     vars.iter()
         .find_map(|&name| env::var(name).ok().filter(|v| !v.is_empty()))
@@ -153,11 +138,14 @@ fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
     if no_proxy.is_empty() {
         return false;
     }
-    let Some(host) = url
-        .split_once("://")
-        .and_then(|(_, rest)| rest.split('/').next())
-        .and_then(|authority| authority.split(':').next())
-    else {
+    let Some(host) = Url::parse(url).ok().and_then(|u| {
+        u.host_str().map(|h| {
+            h.strip_prefix('[')
+                .and_then(|h| h.strip_suffix(']'))
+                .unwrap_or(h)
+                .to_owned()
+        })
+    }) else {
         return false;
     };
 
@@ -169,7 +157,11 @@ fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
             if pattern == "*" {
                 return true;
             }
-            let pattern = pattern.to_lowercase();
+            let pattern = pattern
+                .strip_prefix('[')
+                .and_then(|p| p.strip_suffix(']'))
+                .unwrap_or(pattern)
+                .to_lowercase();
             let host = host.to_lowercase();
             if host == pattern {
                 return true;
@@ -516,6 +508,37 @@ mod tests {
     }
 
     #[test]
+    fn select_proxy_does_not_cross_fallback_between_http_and_https() {
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", Some("http://http-proxy:8080")),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", None),
+                ("https_proxy", None),
+                ("ALL_PROXY", None),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(select_proxy_for_url("https://example.com"), None);
+            },
+        );
+
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", None),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", Some("http://https-proxy:8080")),
+                ("https_proxy", None),
+                ("ALL_PROXY", None),
+                ("all_proxy", None),
+            ],
+            || {
+                assert_eq!(select_proxy_for_url("http://example.com"), None);
+            },
+        );
+    }
+
+    #[test]
     fn select_proxy_falls_back_to_all_proxy() {
         with_env_vars(
             &[
@@ -588,7 +611,7 @@ mod tests {
     fn release_download_base_uses_fetched_tag() {
         assert_eq!(
             release_download_base("1.2.3"),
-            "https://github.com/MunMunMiao/tag-cli/releases/download/v1.2.3"
+            "https://github.com/MunMunMiao/tag-cli/releases/download/1.2.3"
         );
         assert_eq!(
             release_download_base("v1.2.3"),
@@ -691,6 +714,16 @@ mod tests {
     fn is_no_proxy_matches_exact_host() {
         assert!(is_no_proxy("https://example.com/path", "example.com"));
         assert!(is_no_proxy("https://EXAMPLE.COM/path", "example.com"));
+    }
+
+    #[test]
+    fn is_no_proxy_matches_url_parser_hosts() {
+        assert!(is_no_proxy("http://[::1]:8000/path", "::1"));
+        assert!(is_no_proxy("http://[::1]:8000/path", "[::1]"));
+        assert!(is_no_proxy(
+            "http://user:pass@example.com/path",
+            "example.com"
+        ));
     }
 
     #[test]

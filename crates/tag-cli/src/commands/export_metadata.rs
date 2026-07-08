@@ -72,6 +72,7 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
         args.fields.as_deref(),
         args.exclude_fields.as_deref(),
     );
+    check_manifest_overwrites_for_records(&records, &mode, args.yes)?;
 
     let (manifest, _covers_written) = build_manifest(
         &records,
@@ -477,6 +478,27 @@ fn serialize_manifest(manifest: &Manifest) -> Result<String, TagCliError> {
     })
 }
 
+fn check_manifest_overwrites_for_records(
+    records: &[ExportRecord],
+    mode: &OutputMode,
+    confirmed: bool,
+) -> Result<(), TagCliError> {
+    match mode {
+        OutputMode::Stdout => Ok(()),
+        OutputMode::AggregateFile(path) => check_overwrite(path, confirmed),
+        OutputMode::SidecarDirectory(dir) => {
+            for record in records {
+                let file_name = Path::new(&record.file_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("file");
+                check_overwrite(&dir.join(format!("{file_name}.metadata.yaml")), confirmed)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 fn write_manifest(
     manifest: &Manifest,
     mode: &OutputMode,
@@ -503,12 +525,7 @@ fn write_manifest(
                     .and_then(|s| s.to_str())
                     .unwrap_or("file");
                 let out_path = dir.join(format!("{file_name}.metadata.yaml"));
-                if out_path.exists() && !confirmed {
-                    return Err(TagCliError::Io(std::io::Error::other(format!(
-                        "output file already exists: {}. Use -y to overwrite.",
-                        out_path.display()
-                    ))));
-                }
+                check_overwrite(&out_path, confirmed)?;
                 let single = Manifest {
                     files: vec![entry.clone()],
                     ..Manifest::default()
@@ -588,6 +605,50 @@ mod tests {
         });
         record.pictures.front_cover_present = true;
         record
+    }
+
+    fn audio_with_front_cover(tmp: &Path) -> PathBuf {
+        use image::{ImageBuffer, ImageFormat, Rgb};
+
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/song.mp3");
+        let audio = tmp.join("song.mp3");
+        std::fs::copy(&fixture, &audio).unwrap();
+
+        let cover = tmp.join("cover.png");
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(10, 10, Rgb([255, 0, 0]));
+        img.write_to(
+            &mut std::fs::File::create(&cover).unwrap(),
+            ImageFormat::Png,
+        )
+        .unwrap();
+
+        let manifest_path = tmp.join("apply-manifest.yaml");
+        let manifest = Manifest {
+            files: vec![FileEntry {
+                path: audio.clone(),
+                tags: BTreeMap::new(),
+                cover: Some(cover),
+                picture_type: Some("Front Cover".to_string()),
+            }],
+            ..Manifest::default()
+        };
+        std::fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
+
+        let apply_args = ApplyArgs {
+            filename: manifest_path,
+            yes: true,
+            dry_run: false,
+            fail_fast: false,
+            image_options: ImageOptions {
+                no_process_cover: true,
+                cover_format: None,
+                cover_max_size: None,
+                cover_max_file_size: None,
+                cover_quality: None,
+            },
+        };
+        crate::commands::apply::run(&apply_args, false).unwrap();
+        audio
     }
 
     #[test]
@@ -1249,48 +1310,8 @@ mod tests {
 
     #[test]
     fn run_propagates_cover_write_error() {
-        use image::{ImageBuffer, ImageFormat, Rgb};
-
         let tmp = tempfile::tempdir().unwrap();
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/song.mp3");
-        let audio = tmp.path().join("song.mp3");
-        std::fs::copy(&fixture, &audio).unwrap();
-
-        let cover = tmp.path().join("cover.png");
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(10, 10, Rgb([255, 0, 0]));
-        img.write_to(
-            &mut std::fs::File::create(&cover).unwrap(),
-            ImageFormat::Png,
-        )
-        .unwrap();
-
-        let manifest_path = tmp.path().join("manifest.yaml");
-        let manifest = Manifest {
-            files: vec![FileEntry {
-                path: audio.clone(),
-                tags: BTreeMap::new(),
-                cover: Some(cover),
-                picture_type: Some("Front Cover".to_string()),
-            }],
-            ..Manifest::default()
-        };
-        std::fs::write(&manifest_path, serde_yaml::to_string(&manifest).unwrap()).unwrap();
-
-        let apply_args = ApplyArgs {
-            filename: manifest_path,
-            yes: true,
-            dry_run: false,
-            fail_fast: false,
-            image_options: ImageOptions {
-                no_process_cover: true,
-                cover_format: None,
-                cover_max_size: None,
-                cover_max_file_size: None,
-                cover_quality: None,
-            },
-        };
-        crate::commands::apply::run(&apply_args, false).unwrap();
-
+        let audio = audio_with_front_cover(tmp.path());
         let cover_dir = tmp.path().join("readonly_covers");
         std::fs::create_dir(&cover_dir).unwrap();
         #[cfg(unix)]
@@ -1338,6 +1359,35 @@ mod tests {
         }
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn run_does_not_write_cover_before_manifest_overwrite_confirmation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let audio = audio_with_front_cover(tmp.path());
+        let manifest_path = tmp.path().join("manifest.yaml");
+        let cover_dir = tmp.path().join("covers");
+        std::fs::write(&manifest_path, "existing").unwrap();
+
+        let args = ExportMetadataArgs {
+            input: vec![audio],
+            output: Some(manifest_path),
+            per_file: false,
+            aggregate: true,
+            with_cover: true,
+            cover_dir: Some(cover_dir.clone()),
+            fields: None,
+            exclude_fields: None,
+            absolute_paths: false,
+            relative_paths: false,
+            fail_fast: false,
+            yes: false,
+        };
+
+        let result = run(&args, false);
+
+        assert!(result.is_err());
+        assert!(!cover_dir.exists());
     }
 
     #[test]

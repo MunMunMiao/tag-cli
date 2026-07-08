@@ -79,7 +79,7 @@ Common workflows:
   tag-cli export metadata -i "**/*.mp3" -o manifest.yaml
 
 Safety:
-  Commands that modify files in place require -y/--yes, TAG_CLI_YES=1/true, or CI=true.
+  Commands that modify files in place require -y/--yes.
   Use --dry-run first when a command supports it.
 ```
 
