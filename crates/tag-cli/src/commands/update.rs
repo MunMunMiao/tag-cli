@@ -39,18 +39,20 @@ pub fn run() -> Result<()> {
     let asset_path = tmp_dir.path().join(&asset_name);
     let sums_path = tmp_dir.path().join("SHA256SUMS");
 
+    let download_base = release_download_base(latest_version);
+
     #[cfg(coverage)]
     {
-        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, &asset_name), &asset_path)
+        download_file(&join_url(&download_base, &asset_name), &asset_path)
             .expect("download asset succeeds");
-        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, "SHA256SUMS"), &sums_path)
+        download_file(&join_url(&download_base, "SHA256SUMS"), &sums_path)
             .expect("download sums succeeds");
         verify_checksum(&asset_path, &sums_path, &asset_name).expect("verify checksum succeeds");
     }
     #[cfg(not(coverage))]
     {
-        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, &asset_name), &asset_path)?;
-        download_file(&join_url(DEFAULT_DOWNLOAD_BASE, "SHA256SUMS"), &sums_path)?;
+        download_file(&join_url(&download_base, &asset_name), &asset_path)?;
+        download_file(&join_url(&download_base, "SHA256SUMS"), &sums_path)?;
         verify_checksum(&asset_path, &sums_path, &asset_name)?;
     }
 
@@ -69,14 +71,19 @@ pub fn run() -> Result<()> {
 }
 
 const DEFAULT_API_URL: &str = "https://api.github.com/repos/MunMunMiao/tag-cli/releases/latest";
-const DEFAULT_DOWNLOAD_BASE: &str =
-    "https://github.com/MunMunMiao/tag-cli/releases/latest/download";
+const DEFAULT_DOWNLOAD_BASE: &str = "https://github.com/MunMunMiao/tag-cli/releases/download";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_REDIRECTS: usize = 5;
 
 fn join_url(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     let path = path.trim_start_matches('/');
     format!("{base}/{path}")
+}
+
+fn release_download_base(version: &str) -> String {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    join_url(DEFAULT_DOWNLOAD_BASE, &format!("v{version}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,12 +95,12 @@ struct Release {
 fn build_agent_for(url: &str) -> Result<Agent> {
     let mut builder = AgentBuilder::new()
         .timeout_read(REQUEST_TIMEOUT)
-        .timeout_write(REQUEST_TIMEOUT);
+        .timeout_write(REQUEST_TIMEOUT)
+        .redirects(0)
+        .try_proxy_from_env(false);
 
     if let Some(proxy_url) = select_proxy_for_url(url) {
-        let no_proxy = env::var("NO_PROXY")
-            .or_else(|_| env::var("no_proxy"))
-            .unwrap_or_default();
+        let no_proxy = select_no_proxy();
         if !is_no_proxy(url, &no_proxy) {
             let proxy = Proxy::new(&proxy_url)
                 .map_err(|e| anyhow::anyhow!("invalid proxy URL '{proxy_url}': {e}"))?;
@@ -133,6 +140,13 @@ fn select_proxy_for_url(url: &str) -> Option<String> {
         .find_map(|&name| env::var(name).ok().filter(|v| !v.is_empty()))
 }
 
+fn select_no_proxy() -> String {
+    ["NO_PROXY", "no_proxy"]
+        .iter()
+        .find_map(|&name| env::var(name).ok().filter(|v| !v.is_empty()))
+        .unwrap_or_default()
+}
+
 /// Check whether `url`'s host matches the `NO_PROXY` exclusion list.
 fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
     if no_proxy.is_empty() {
@@ -166,20 +180,12 @@ fn is_no_proxy(url: &str, no_proxy: &str) -> bool {
 
 fn fetch_latest_release() -> Result<Release> {
     #[cfg(coverage)]
-    let body = build_agent_for(DEFAULT_API_URL)
-        .expect("build agent succeeds")
-        .get(DEFAULT_API_URL)
-        .set("User-Agent", "tag-cli")
-        .call()
+    let body = get_with_redirects(DEFAULT_API_URL)
         .expect("API call succeeds")
         .into_string()
         .expect("read body succeeds");
     #[cfg(not(coverage))]
-    let body = build_agent_for(DEFAULT_API_URL)?
-        .get(DEFAULT_API_URL)
-        .set("User-Agent", "tag-cli")
-        .call()?
-        .into_string()?;
+    let body = get_with_redirects(DEFAULT_API_URL)?.into_string()?;
     #[cfg(coverage)]
     {
         Ok(serde_json::from_str(&body).expect("release JSON is valid"))
@@ -253,15 +259,51 @@ fn resolve_asset_name(version: &str) -> Result<String> {
     asset_name(version)
 }
 
+fn get_with_redirects(url: &str) -> Result<ureq::Response> {
+    let mut url = url.to_string();
+    for _ in 0..MAX_REDIRECTS {
+        let resp = build_agent_for(&url)?
+            .get(&url)
+            .set("User-Agent", "tag-cli")
+            .call()?;
+        if !(300..400).contains(&resp.status()) {
+            return Ok(resp);
+        }
+        let location = resp
+            .header("location")
+            .ok_or_else(|| anyhow::anyhow!("redirect response missing Location header"))?;
+        url = redirect_url(&url, location)?;
+    }
+    bail!("reached max redirects ({MAX_REDIRECTS})")
+}
+
+fn redirect_url(current_url: &str, location: &str) -> Result<String> {
+    if location.starts_with("http://") || location.starts_with("https://") {
+        return Ok(location.into());
+    }
+    let (scheme, rest) = current_url
+        .split_once("://")
+        .ok_or_else(|| anyhow::anyhow!("invalid redirect base URL '{current_url}'"))?;
+    let authority = rest
+        .split('/')
+        .next()
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("invalid redirect base URL '{current_url}'"))?;
+    if location.starts_with('/') {
+        Ok(format!("{scheme}://{authority}{location}"))
+    } else {
+        let base = current_url
+            .rsplit_once('/')
+            .map(|(base, _)| base)
+            .unwrap_or(current_url);
+        Ok(join_url(base, location))
+    }
+}
+
 fn download_file(url: &str, dest: &Path) -> Result<()> {
     #[cfg(coverage)]
     {
-        let resp = build_agent_for(url)
-            .expect("build agent succeeds")
-            .get(url)
-            .set("User-Agent", "tag-cli")
-            .call()
-            .expect("download call succeeds");
+        let resp = get_with_redirects(url).expect("download call succeeds");
         let mut reader = resp.into_reader();
         let mut writer = File::create(dest).expect("create dest file succeeds");
         io::copy(&mut reader, &mut writer).expect("copy download succeeds");
@@ -269,10 +311,7 @@ fn download_file(url: &str, dest: &Path) -> Result<()> {
     }
     #[cfg(not(coverage))]
     {
-        let resp = build_agent_for(url)?
-            .get(url)
-            .set("User-Agent", "tag-cli")
-            .call()?;
+        let resp = get_with_redirects(url)?;
         let mut reader = resp.into_reader();
         let mut writer = File::create(dest)?;
         io::copy(&mut reader, &mut writer)?;
@@ -542,6 +581,44 @@ mod tests {
             || {
                 assert_eq!(select_proxy_for_url("https://example.com"), None);
             },
+        );
+    }
+
+    #[test]
+    fn select_no_proxy_falls_back_to_lowercase_when_uppercase_is_empty() {
+        with_env_vars(
+            &[("NO_PROXY", Some("")), ("no_proxy", Some("github.com"))],
+            || {
+                assert_eq!(select_no_proxy(), "github.com");
+            },
+        );
+    }
+
+    #[test]
+    fn release_download_base_uses_fetched_tag() {
+        assert_eq!(
+            release_download_base("1.2.3"),
+            "https://github.com/MunMunMiao/tag-cli/releases/download/v1.2.3"
+        );
+        assert_eq!(
+            release_download_base("v1.2.3"),
+            "https://github.com/MunMunMiao/tag-cli/releases/download/v1.2.3"
+        );
+    }
+
+    #[test]
+    fn redirect_url_handles_absolute_and_relative_locations() {
+        assert_eq!(
+            redirect_url("https://github.com/a/b", "https://assets.example.com/file").unwrap(),
+            "https://assets.example.com/file"
+        );
+        assert_eq!(
+            redirect_url("https://github.com/a/b", "/download/file").unwrap(),
+            "https://github.com/download/file"
+        );
+        assert_eq!(
+            redirect_url("https://github.com/a/b", "file").unwrap(),
+            "https://github.com/a/file"
         );
     }
 
