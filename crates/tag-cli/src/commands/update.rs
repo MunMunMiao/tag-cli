@@ -262,7 +262,8 @@ fn resolve_asset_name(version: &str) -> Result<String> {
 
 fn get_with_redirects(url: &str) -> Result<ureq::Response> {
     let mut url = url.to_string();
-    for _ in 0..MAX_REDIRECTS {
+    let mut redirects = 0;
+    loop {
         let resp = build_agent_for(&url)?
             .get(&url)
             .set("User-Agent", "tag-cli")
@@ -270,12 +271,15 @@ fn get_with_redirects(url: &str) -> Result<ureq::Response> {
         if !(300..400).contains(&resp.status()) {
             return Ok(resp);
         }
+        if redirects >= MAX_REDIRECTS {
+            bail!("reached max redirects ({MAX_REDIRECTS})");
+        }
         let location = resp
             .header("location")
             .ok_or_else(|| anyhow::anyhow!("redirect response missing Location header"))?;
         url = redirect_url(&url, location)?;
+        redirects += 1;
     }
-    bail!("reached max redirects ({MAX_REDIRECTS})")
 }
 
 fn redirect_url(current_url: &str, location: &str) -> Result<String> {
@@ -613,6 +617,67 @@ mod tests {
         assert_eq!(
             redirect_url("https://github.com/a/b", "file").unwrap(),
             "https://github.com/a/file"
+        );
+    }
+
+    #[test]
+    fn get_with_redirects_allows_max_redirects_before_final_response() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        with_env_vars(
+            &[
+                ("HTTP_PROXY", None),
+                ("http_proxy", None),
+                ("HTTPS_PROXY", None),
+                ("https_proxy", None),
+                ("ALL_PROXY", None),
+                ("all_proxy", None),
+                ("NO_PROXY", None),
+                ("no_proxy", None),
+            ],
+            || {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = listener.local_addr().unwrap();
+                let handle = thread::spawn(move || {
+                    for i in 0..=MAX_REDIRECTS {
+                        let (mut stream, _) = listener.accept().unwrap();
+                        let mut first_line = String::new();
+                        let mut reader = BufReader::new(stream.try_clone().unwrap());
+                        reader.read_line(&mut first_line).unwrap();
+                        loop {
+                            let mut line = String::new();
+                            reader.read_line(&mut line).unwrap();
+                            if line == "\r\n" {
+                                break;
+                            }
+                        }
+                        assert!(first_line.starts_with(&format!("GET /hop{i}")));
+                        if i < MAX_REDIRECTS {
+                            write!(
+                                stream,
+                                "HTTP/1.1 302 Found\r\nLocation: /hop{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                                i + 1
+                            )
+                            .unwrap();
+                        } else {
+                            write!(
+                                stream,
+                                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                            )
+                            .unwrap();
+                        }
+                    }
+                });
+
+                let body = get_with_redirects(&format!("http://{addr}/hop0"))
+                    .unwrap()
+                    .into_string()
+                    .unwrap();
+                assert_eq!(body, "ok");
+                handle.join().unwrap();
+            },
         );
     }
 
