@@ -21,6 +21,7 @@ serde_yaml = "0.9"
 pathdiff = "0.2"
 mime_guess = "2"
 ureq = { version = "2", features = ["rustls"] }
+url = "2"
 self-replace = "1"
 sha2 = "0.10"
 tempfile = "3"

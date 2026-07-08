@@ -8,6 +8,7 @@ use anyhow::{Result, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use ureq::{Agent, AgentBuilder, Proxy};
+use url::Url;
 
 pub fn run() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
@@ -278,26 +279,11 @@ fn get_with_redirects(url: &str) -> Result<ureq::Response> {
 }
 
 fn redirect_url(current_url: &str, location: &str) -> Result<String> {
-    if location.starts_with("http://") || location.starts_with("https://") {
-        return Ok(location.into());
-    }
-    let (scheme, rest) = current_url
-        .split_once("://")
-        .ok_or_else(|| anyhow::anyhow!("invalid redirect base URL '{current_url}'"))?;
-    let authority = rest
-        .split('/')
-        .next()
-        .filter(|host| !host.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("invalid redirect base URL '{current_url}'"))?;
-    if location.starts_with('/') {
-        Ok(format!("{scheme}://{authority}{location}"))
-    } else {
-        let base = current_url
-            .rsplit_once('/')
-            .map(|(base, _)| base)
-            .unwrap_or(current_url);
-        Ok(join_url(base, location))
-    }
+    Ok(Url::parse(current_url)
+        .map_err(|e| anyhow::anyhow!("invalid redirect base URL '{current_url}': {e}"))?
+        .join(location)
+        .map_err(|e| anyhow::anyhow!("invalid redirect Location '{location}': {e}"))?
+        .into())
 }
 
 fn download_file(url: &str, dest: &Path) -> Result<()> {
@@ -613,8 +599,16 @@ mod tests {
             "https://assets.example.com/file"
         );
         assert_eq!(
+            redirect_url("https://github.com/a/b", "//assets.example.com/file").unwrap(),
+            "https://assets.example.com/file"
+        );
+        assert_eq!(
             redirect_url("https://github.com/a/b", "/download/file").unwrap(),
             "https://github.com/download/file"
+        );
+        assert_eq!(
+            redirect_url("https://github.com/a/b", "?download=1").unwrap(),
+            "https://github.com/a/b?download=1"
         );
         assert_eq!(
             redirect_url("https://github.com/a/b", "file").unwrap(),
