@@ -1977,25 +1977,12 @@ fn test_set_requires_confirmation_with_hint() {
 }
 
 #[test]
-fn test_ci_env_does_not_bypass_confirmation() {
+fn test_env_confirmation_vars_do_not_bypass_confirmation() {
     let tmp = TempDir::new().unwrap();
     let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
 
     cmd()
         .env("CI", "true")
-        .args(["set", "-i", input.to_str().unwrap(), "TITLE=Ci Title"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("tag-cli set:"))
-        .stderr(predicate::str::contains("requires -y/--yes"));
-}
-
-#[test]
-fn test_tag_cli_yes_env_does_not_bypass_confirmation() {
-    let tmp = TempDir::new().unwrap();
-    let input = copy_fixture_to_tmp("sample_flac.flac", &tmp);
-
-    cmd()
         .env("TAG_CLI_YES", "1")
         .args(["set", "-i", input.to_str().unwrap(), "TITLE=Env Title"])
         .assert()

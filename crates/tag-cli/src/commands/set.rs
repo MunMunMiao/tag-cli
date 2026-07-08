@@ -39,7 +39,7 @@ pub fn run(args: &SetArgs, verbose: bool) -> Result<(), TagCliError> {
         .add(Box::new(UpdateTagsStep::new(updates)))
         .add(Box::new(ResolveOutputPathStep::new(
             args.output.clone(),
-            !crate::cli::Cli::is_confirmed(args.yes),
+            !args.yes,
             "tag-cli set",
         )))
         .add(Box::new(SaveFileStep::new(save_mode)))

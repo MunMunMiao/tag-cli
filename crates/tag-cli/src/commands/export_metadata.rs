@@ -81,7 +81,7 @@ pub fn run(args: &ExportMetadataArgs, verbose: bool) -> Result<(), TagCliError> 
         &base_dir,
     )?;
 
-    write_manifest(&manifest, &mode, crate::cli::Cli::is_confirmed(args.yes))?;
+    write_manifest(&manifest, &mode, args.yes)?;
 
     crate::commands::status(format!(
         "Success: {}, Skipped: {}, Failures: {}",

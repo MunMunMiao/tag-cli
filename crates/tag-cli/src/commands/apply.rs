@@ -79,7 +79,7 @@ pub fn run(args: &ApplyArgs, verbose: bool) -> Result<(), TagCliError> {
             )))
             .add(Box::new(ResolveOutputPathStep::new(
                 None,
-                !crate::cli::Cli::is_confirmed(args.yes),
+                !args.yes,
                 "tag-cli apply",
             )))
             .add(Box::new(SaveFileStep::new(SaveMode::FullReplace)));

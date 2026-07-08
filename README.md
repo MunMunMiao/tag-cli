@@ -263,14 +263,7 @@ tag-cli update
 
 `tag-cli update` checks GitHub Releases, downloads the matching binary for your platform, verifies the SHA256 checksum, and replaces the running executable. No confirmation prompt is shown.
 
-The update command honors standard proxy environment variables:
-
-- `HTTP_PROXY` / `http_proxy`
-- `HTTPS_PROXY` / `https_proxy`
-- `ALL_PROXY` / `all_proxy`
-- `NO_PROXY` / `no_proxy`
-
-Proxy selection follows the usual scheme-specific priority: `HTTPS_PROXY` for HTTPS URLs, then `ALL_PROXY`, then `HTTP_PROXY`. `NO_PROXY` supports `*` for all hosts, exact hosts, and domain suffixes such as `.example.com`.
+The update command honors the standard proxy environment variables listed in [Environment variables](#environment-variables).
 
 <a id="supported-formats"></a>
 ## Supported audio formats and cover image input formats
@@ -926,6 +919,8 @@ The update command honors standard proxy environment variables:
 | `HTTPS_PROXY` / `https_proxy` | Proxy for HTTPS requests |
 | `ALL_PROXY` / `all_proxy` | Fallback proxy for either scheme |
 | `NO_PROXY` / `no_proxy` | Bypass proxy for matching hosts |
+
+Proxy selection follows scheme-specific priority, then `ALL_PROXY`. `NO_PROXY` supports `*`, exact hosts, and domain suffixes such as `.example.com`.
 
 <a id="troubleshooting-and-faq"></a>
 ## Troubleshooting / FAQ

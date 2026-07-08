@@ -61,7 +61,7 @@ fn cover_set(args: &crate::cli::CoverSetArgs, verbose: bool) -> Result<(), TagCl
         .add(Box::new(UpdateCoverStep::new()))
         .add(Box::new(ResolveOutputPathStep::new(
             args.output.clone(),
-            !crate::cli::Cli::is_confirmed(args.yes),
+            !args.yes,
             "tag-cli cover set",
         )))
         .add(Box::new(SaveFileStep::new(SaveMode::Incremental)))
@@ -78,7 +78,7 @@ fn cover_clear(args: &crate::cli::CoverClearArgs, verbose: bool) -> Result<(), T
         .add(Box::new(ReadMetadataStep::new()))
         .add(Box::new(ResolveOutputPathStep::new(
             args.output.clone(),
-            !crate::cli::Cli::is_confirmed(args.yes),
+            !args.yes,
             "tag-cli cover clear",
         )))
         .add(Box::new(SaveFileStep::new(SaveMode::Incremental)))

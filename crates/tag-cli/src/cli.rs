@@ -74,13 +74,6 @@ pub struct Cli {
     pub verbose: bool,
 }
 
-impl Cli {
-    /// Return whether destructive writes were explicitly confirmed.
-    pub fn is_confirmed(explicit_yes: bool) -> bool {
-        explicit_yes
-    }
-}
-
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     #[command(
@@ -718,11 +711,6 @@ pub struct ExportMetadataArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn is_confirmed_true_with_explicit_yes() {
-        assert!(Cli::is_confirmed(true));
-    }
 
     #[test]
     fn image_options_jpeg_format() {
